@@ -1,0 +1,44 @@
+# Jaeger v2 (OpenTelemetry Collector based). Every endpoint comes from the environment.
+service:
+  extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    metrics:
+      level: none
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: ${env:JAEGER_HEALTH_LISTEN}
+  jaeger_query:
+    storage:
+      traces: traces_store
+    http:
+      endpoint: ${env:JAEGER_QUERY_LISTEN}
+    grpc:
+      endpoint: ${env:JAEGER_QUERY_GRPC_LISTEN}
+  jaeger_storage:
+    backends:
+      traces_store:
+        memory:
+          max_traces: ${env:JAEGER_MAX_TRACES}
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: ${env:JAEGER_OTLP_GRPC_LISTEN}
+      http:
+        endpoint: ${env:JAEGER_OTLP_HTTP_LISTEN}
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: traces_store

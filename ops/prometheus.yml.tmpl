@@ -1,0 +1,10 @@
+# Rendered by ops/stack.ps1: each placeholder is replaced from .env before Prometheus starts.
+global:
+  scrape_interval: ${PROMETHEUS_SCRAPE_INTERVAL}
+  evaluation_interval: ${PROMETHEUS_EVAL_INTERVAL}
+
+scrape_configs:
+  - job_name: niftypulse
+    file_sd_configs:
+      - files: ["${PROMETHEUS_TARGETS_FILE}"]
+        refresh_interval: 30s

@@ -15,7 +15,7 @@ from niftypulse.core.config import DbSettings
 
 def create_engine(settings: DbSettings) -> AsyncEngine:
     return create_async_engine(
-        str(settings.dsn),
+        settings.dsn,
         pool_size=settings.pool_size,
         max_overflow=settings.max_overflow,
         pool_pre_ping=True,

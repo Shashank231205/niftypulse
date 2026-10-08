@@ -2,9 +2,9 @@
 
 Every event is immutable and versioned, and has a unique id. The id doubles as the
 JetStream de-duplication key, so a retried publish never creates a second copy, and it
-lets any prediction be traced back to the exact ticks that produced it.
+lets any prediction be traced back to the exact market event that produced it.
 
-Timestamps are integer nanoseconds: `ts_exchange` is when NSE stamped the event and
+Timestamps are integer nanoseconds: `ts_exchange` is when the venue stamped the event and
 `ts_recv` is when this system first saw it. The gap between them is feed latency.
 """
 
@@ -14,7 +14,11 @@ from typing import Literal
 
 import msgspec
 
+from niftypulse.domain.instruments import Instrument
+
 SCHEMA_VERSION = 1
+
+Side = Literal["buy", "sell"]
 
 
 def new_id() -> str:
@@ -35,19 +39,34 @@ class Event(msgspec.Struct, frozen=True, kw_only=True, tag_field="kind"):
 
 class Level(msgspec.Struct, frozen=True, array_like=True):
     price: float
-    qty: int
-    orders: int
+    qty: float
+    orders: int = 0
 
 
-class BookTick(Event, frozen=True, kw_only=True, tag="book"):
-    """Top-of-book snapshot plus the last trade, as delivered by the broker feed."""
+class BookSnapshot(Event, frozen=True, kw_only=True, tag="book"):
+    """Top-N levels after the venue update with sequence number `seq` was applied."""
 
-    ltp: float
-    ltq: int
-    volume: int
-    oi: int
+    seq: int
     bids: tuple[Level, ...]
     asks: tuple[Level, ...]
+
+
+class Trade(Event, frozen=True, kw_only=True, tag="trade"):
+    """One print. `aggressor` is the side that crossed the spread."""
+
+    trade_id: int
+    price: float
+    qty: float
+    aggressor: Side
+
+
+class InstrumentsResolved(Event, frozen=True, kw_only=True, tag="universe"):
+    """Published by the recorder at every (re)start; stored with the ticks for lineage.
+
+    `instrument` holds the venue name for this event.
+    """
+
+    instruments: tuple[Instrument, ...]
 
 
 class FeatureVector(Event, frozen=True, kw_only=True, tag="features"):
@@ -65,6 +84,7 @@ class Prediction(Event, frozen=True, kw_only=True, tag="prediction"):
     vol_forecast: float
     regime: int
     model_version: str
+    feature_set: str
     source_event_id: str
 
 
@@ -73,7 +93,7 @@ class Decision(Event, frozen=True, kw_only=True, tag="decision"):
 
     action: Literal["buy", "sell", "hold"]
     order_type: Literal["limit", "market", "none"]
-    qty: int
+    qty: float
     limit_price: float | None
     fill_probability: float | None
     policy_version: str
@@ -86,7 +106,10 @@ class Alert(Event, frozen=True, kw_only=True, tag="alert"):
     message: str
 
 
-AnyEvent = BookTick | FeatureVector | Prediction | Decision | Alert
+AnyEvent = (
+    BookSnapshot | Trade | InstrumentsResolved | FeatureVector | Prediction | Decision | Alert
+)
+MarketEvent = BookSnapshot | Trade
 
 _encoder = msgspec.msgpack.Encoder()
 _decoder: msgspec.msgpack.Decoder[AnyEvent] = msgspec.msgpack.Decoder(AnyEvent)

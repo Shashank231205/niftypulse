@@ -1,4 +1,8 @@
-"""Tradable instruments and the daily universe snapshot."""
+"""Tradable instruments and the daily universe snapshot.
+
+An instrument key is `<VENUE>|<venue symbol>`, e.g. `BINANCE_USDM|BTCUSDT` or
+`NSE_FO|48704`, so keys are unique across venues and safe to use as partition keys.
+"""
 
 from datetime import date
 from enum import StrEnum
@@ -6,9 +10,17 @@ from enum import StrEnum
 import msgspec
 
 
+class Venue(StrEnum):
+    BINANCE_SPOT = "BINANCE_SPOT"
+    BINANCE_USDM = "BINANCE_USDM"
+    NSE = "NSE"
+
+
 class InstrumentKind(StrEnum):
     INDEX = "index"
     EQUITY = "equity"
+    SPOT = "spot"
+    PERPETUAL = "perpetual"
     FUTURE = "future"
     CALL = "call"
     PUT = "put"
@@ -16,13 +28,14 @@ class InstrumentKind(StrEnum):
 
 class Instrument(msgspec.Struct, frozen=True, kw_only=True):
     key: str
+    venue: Venue
     symbol: str
     kind: InstrumentKind
     underlying: str | None = None
     expiry: date | None = None
     strike: float | None = None
-    lot_size: int = 1
-    tick_size: float = 0.05
+    lot_size: float = 1.0
+    tick_size: float
 
 
 class Universe(msgspec.Struct, frozen=True, kw_only=True):
@@ -30,12 +43,13 @@ class Universe(msgspec.Struct, frozen=True, kw_only=True):
 
     trading_day: date
     instruments: tuple[Instrument, ...]
-    source_url: str
+    source: str
     source_sha256: str
 
     @property
     def keys(self) -> list[str]:
         return [i.key for i in self.instruments]
 
-    def by_key(self) -> dict[str, Instrument]:
-        return {i.key: i for i in self.instruments}
+
+def instrument_key(venue: Venue, symbol: str) -> str:
+    return f"{venue.value}|{symbol}"

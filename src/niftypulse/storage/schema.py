@@ -93,9 +93,10 @@ class PaperFill(_Timestamped, Base):
     instrument: Mapped[str] = mapped_column(String(64))
     side: Mapped[str] = mapped_column(String(4))
     order_type: Mapped[str] = mapped_column(String(8))
-    qty: Mapped[int] = mapped_column(Integer)
+    qty: Mapped[float] = mapped_column(Float)
     price: Mapped[float] = mapped_column(Float)
-    costs_inr: Mapped[float] = mapped_column(Float)
+    costs: Mapped[float] = mapped_column(Float)
+    costs_currency: Mapped[str] = mapped_column(String(8))
     policy_version: Mapped[str] = mapped_column(String(64))
     trace_id: Mapped[str | None] = mapped_column(String(32))
 

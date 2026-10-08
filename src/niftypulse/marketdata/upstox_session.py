@@ -1,6 +1,6 @@
 """Upstox OAuth login and access-token storage.
 
-Upstox tokens expire at 03:30 IST every day, so the operator logs in once each
+Upstox tokens expire once a day at UPSTOX_TOKEN_EXPIRY_LOCAL, so the operator logs in each
 morning. The redirect URL points at localhost over https with nothing listening, so the
 browser shows an error page after login; the operator pastes that URL back and this
 module checks the CSRF state and exchanges the one-time code for a token.
@@ -19,9 +19,6 @@ import msgspec
 
 from niftypulse.core.config import BrokerSettings
 
-IST = ZoneInfo("Asia/Kolkata")
-_DAILY_EXPIRY = time(3, 30)
-
 
 class AuthError(RuntimeError):
     pass
@@ -33,18 +30,19 @@ class StoredToken(msgspec.Struct, frozen=True, kw_only=True):
     issued_at: datetime
     expires_at: datetime
 
-    def is_valid(self, now: datetime | None = None) -> bool:
-        return (now or datetime.now(IST)) < self.expires_at
+    def is_valid(self, now: datetime) -> bool:
+        return now < self.expires_at
 
 
-def next_expiry(issued: datetime) -> datetime:
-    expiry = datetime.combine(issued.date(), _DAILY_EXPIRY, tzinfo=IST)
+def next_expiry(issued: datetime, expiry_time: time, tz: ZoneInfo) -> datetime:
+    expiry = datetime.combine(issued.date(), expiry_time, tzinfo=tz)
     return expiry if issued < expiry else expiry + timedelta(days=1)
 
 
 class UpstoxSession:
-    def __init__(self, settings: BrokerSettings) -> None:
+    def __init__(self, settings: BrokerSettings, tz: ZoneInfo) -> None:
         self._s = settings
+        self._tz = tz
         self._token_path = Path(settings.token_file)
 
     def authorization_url(self) -> tuple[str, str]:
@@ -84,14 +82,14 @@ class UpstoxSession:
             timeout=self._s.http_timeout_s,
         )
         if resp.status_code != httpx.codes.OK:
-            raise AuthError(f"token exchange failed with HTTP {resp.status_code}")
+            raise AuthError(f"token exchange failed: HTTP {resp.status_code} {_upstox_error(resp)}")
         body = resp.json()
-        issued = datetime.now(IST)
+        issued = datetime.now(self._tz)
         token = StoredToken(
             access_token=body["access_token"],
             user_id=body.get("user_id", ""),
             issued_at=issued,
-            expires_at=next_expiry(issued),
+            expires_at=next_expiry(issued, self._s.token_expiry_local, self._tz),
         )
         self._save(token)
         return token
@@ -100,8 +98,8 @@ class UpstoxSession:
         if not self._token_path.exists():
             raise AuthError("no Upstox token found; run `niftypulse login`")
         token = msgspec.json.decode(self._token_path.read_bytes(), type=StoredToken)
-        if not token.is_valid():
-            raise AuthError(f"Upstox token expired at {token.expires_at:%Y-%m-%d %H:%M} IST")
+        if not token.is_valid(datetime.now(self._tz)):
+            raise AuthError(f"Upstox token expired at {token.expires_at:%Y-%m-%d %H:%M %Z}")
         return token
 
     def _save(self, token: StoredToken) -> None:
@@ -110,3 +108,12 @@ class UpstoxSession:
         tmp.write_bytes(msgspec.json.encode(token))
         tmp.chmod(0o600)
         tmp.replace(self._token_path)
+
+
+def _upstox_error(resp: httpx.Response) -> str:
+    """Upstox error payloads carry an error code and message, never credentials."""
+    try:
+        errors = resp.json().get("errors") or []
+    except ValueError:
+        return ""
+    return "; ".join(f"{e.get('errorCode')}: {e.get('message')}" for e in errors)

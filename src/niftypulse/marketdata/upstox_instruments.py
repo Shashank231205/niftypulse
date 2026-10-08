@@ -16,12 +16,11 @@ import httpx
 import msgspec
 
 from niftypulse.core import telemetry
-from niftypulse.core.config import BrokerSettings, UniverseSettings
-from niftypulse.domain.instruments import Instrument, InstrumentKind, Universe
+from niftypulse.core.config import BrokerSettings, NseUniverseSettings
+from niftypulse.domain.instruments import Instrument, InstrumentKind, Universe, Venue
 
 log = telemetry.logger(__name__)
 
-IST = ZoneInfo("Asia/Kolkata")
 _PAISE_PER_RUPEE = 100.0
 
 
@@ -37,19 +36,20 @@ class _Row(msgspec.Struct, kw_only=True):
     tick_size: float = 5.0
 
 
-def _expiry_day(ms: int | None) -> date | None:
+def _expiry_day(ms: int | None, tz: ZoneInfo) -> date | None:
     if ms is None:
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=UTC).astimezone(IST).date()
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).astimezone(tz).date()
 
 
-def _to_instrument(row: _Row, kind: InstrumentKind) -> Instrument:
+def _to_instrument(row: _Row, kind: InstrumentKind, tz: ZoneInfo) -> Instrument:
     return Instrument(
         key=row.instrument_key,
+        venue=Venue.NSE,
         symbol=row.trading_symbol,
         kind=kind,
         underlying=row.underlying_symbol,
-        expiry=_expiry_day(row.expiry),
+        expiry=_expiry_day(row.expiry, tz),
         strike=row.strike_price or None,
         lot_size=row.lot_size,
         tick_size=row.tick_size / _PAISE_PER_RUPEE,
@@ -57,7 +57,7 @@ def _to_instrument(row: _Row, kind: InstrumentKind) -> Instrument:
 
 
 def front_month_futures(
-    rows: Iterable[_Row], underlyings: set[str], today: date
+    rows: Iterable[_Row], underlyings: set[str], today: date, tz: ZoneInfo
 ) -> list[Instrument]:
     nearest: dict[str, _Row] = {}
     for r in rows:
@@ -65,7 +65,7 @@ def front_month_futures(
             continue
         if r.underlying_symbol not in underlyings:
             continue
-        exp = _expiry_day(r.expiry)
+        exp = _expiry_day(r.expiry, tz)
         if exp is None or exp < today:
             continue
         best = nearest.get(r.underlying_symbol)
@@ -74,11 +74,16 @@ def front_month_futures(
     missing = underlyings - nearest.keys()
     if missing:
         raise LookupError(f"no live futures contract for {sorted(missing)}")
-    return [_to_instrument(r, InstrumentKind.FUTURE) for r in nearest.values()]
+    return [_to_instrument(r, InstrumentKind.FUTURE, tz) for r in nearest.values()]
 
 
 def option_strip(
-    rows: Iterable[_Row], underlying: str, spot: float, strikes_each_side: int, today: date
+    rows: Iterable[_Row],
+    underlying: str,
+    spot: float,
+    strikes_each_side: int,
+    today: date,
+    tz: ZoneInfo,
 ) -> list[Instrument]:
     """Calls and puts of the nearest expiry, centred on the strike closest to spot."""
     chain = [
@@ -87,7 +92,7 @@ def option_strip(
         if r.segment == "NSE_FO"
         and r.instrument_type in ("CE", "PE")
         and r.underlying_symbol == underlying
-        and (_expiry_day(r.expiry) or date.min) >= today
+        and (_expiry_day(r.expiry, tz) or date.min) >= today
     ]
     if not chain:
         raise LookupError(f"no live options for {underlying}")
@@ -98,14 +103,14 @@ def option_strip(
     selected = set(strikes[max(0, atm - strikes_each_side) : atm + strikes_each_side + 1])
     kinds = {"CE": InstrumentKind.CALL, "PE": InstrumentKind.PUT}
     return [
-        _to_instrument(r, kinds[r.instrument_type])
+        _to_instrument(r, kinds[r.instrument_type], tz)
         for r in sorted(chain, key=lambda r: (r.strike_price or 0.0, r.instrument_type))
         if r.strike_price in selected
     ]
 
 
 def by_symbol(
-    rows: Iterable[_Row], segment: str, symbols: set[str], kind: InstrumentKind
+    rows: Iterable[_Row], segment: str, symbols: set[str], kind: InstrumentKind, tz: ZoneInfo
 ) -> list[Instrument]:
     found = {
         r.trading_symbol: r for r in rows if r.segment == segment and r.trading_symbol in symbols
@@ -113,14 +118,19 @@ def by_symbol(
     missing = symbols - found.keys()
     if missing:
         raise LookupError(f"{segment}: unknown symbols {sorted(missing)}")
-    return [_to_instrument(found[s], kind) for s in sorted(symbols)]
+    return [_to_instrument(found[s], kind, tz) for s in sorted(symbols)]
 
 
 class InstrumentMaster:
     def __init__(
-        self, broker: BrokerSettings, universe: UniverseSettings, access_token: str
+        self,
+        broker: BrokerSettings,
+        universe: NseUniverseSettings,
+        access_token: str,
+        tz: ZoneInfo,
     ) -> None:
         self._broker = broker
+        self._tz = tz
         self._universe = universe
         self._client = httpx.AsyncClient(
             base_url=broker.api_base_url,
@@ -129,27 +139,29 @@ class InstrumentMaster:
         )
 
     async def resolve(self, today: date | None = None) -> Universe:
-        today = today or datetime.now(IST).date()
+        tz = self._tz
+        today = today or datetime.now(tz).date()
         raw = await self._download()
         rows = msgspec.json.decode(gzip.decompress(raw), type=list[_Row], strict=False)
         spot = await self._last_price(self._universe.option_index_key)
 
         instruments = [
-            *by_symbol(rows, "NSE_INDEX", set(self._universe.indices), InstrumentKind.INDEX),
-            *by_symbol(rows, "NSE_EQ", set(self._universe.equities), InstrumentKind.EQUITY),
-            *front_month_futures(rows, set(self._universe.futures), today),
+            *by_symbol(rows, "NSE_INDEX", set(self._universe.indices), InstrumentKind.INDEX, tz),
+            *by_symbol(rows, "NSE_EQ", set(self._universe.equities), InstrumentKind.EQUITY, tz),
+            *front_month_futures(rows, set(self._universe.futures), today, tz),
             *option_strip(
                 rows,
                 self._universe.option_underlying,
                 spot,
                 self._universe.option_strikes_each_side,
                 today,
+                tz,
             ),
         ]
         universe = Universe(
             trading_day=today,
             instruments=tuple(instruments),
-            source_url=self._broker.instrument_master_url,
+            source=self._broker.instrument_master_url,
             source_sha256=hashlib.sha256(raw).hexdigest(),
         )
         log.info("universe.resolved", day=str(today), instruments=len(instruments), spot=spot)

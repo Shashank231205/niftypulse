@@ -26,6 +26,8 @@ dependencies = [
     "httpx>=0.28",
     "websockets>=14",
     "tzdata>=2024.2",
+    "sortedcontainers>=2.4",
+    "truststore>=0.10",
 ]
 
 [project.optional-dependencies]
@@ -80,7 +82,7 @@ plugins = ["pydantic.mypy"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["nats.*", "pyarrow.*", "duckdb.*", "upstox_client.*"]
+module = ["nats.*", "pyarrow.*", "duckdb.*", "upstox_client.*", "sortedcontainers.*", "asyncpg.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

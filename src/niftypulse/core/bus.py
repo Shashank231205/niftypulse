@@ -14,7 +14,9 @@ import asyncio
 import ssl
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Protocol
 
+import msgspec
 import nats
 from nats.aio.client import Client
 from nats.aio.msg import Msg
@@ -56,15 +58,40 @@ class StreamSpec:
     max_bytes: int
 
 
-STREAMS = (
-    StreamSpec("MARKETDATA", ("md.>",), max_age_s=3 * 86_400, max_bytes=20 * 2**30),
-    StreamSpec("FEATURES", ("feat.>",), max_age_s=86_400, max_bytes=10 * 2**30),
-    StreamSpec("SIGNALS", ("pred.>", "decision.>"), max_age_s=7 * 86_400, max_bytes=5 * 2**30),
-    StreamSpec("ALERTS", ("alert.>",), max_age_s=30 * 86_400, max_bytes=2**30),
-    StreamSpec("DEADLETTER", ("dlq.>",), max_age_s=30 * 86_400, max_bytes=2**30),
-)
+def stream_specs(s: BusSettings) -> tuple[StreamSpec, ...]:
+    """Stream topology is code; retention limits are settings."""
+    return (
+        StreamSpec("MARKETDATA", ("md.>",), s.marketdata_max_age_s, s.marketdata_max_bytes),
+        StreamSpec("FEATURES", ("feat.>",), s.features_max_age_s, s.features_max_bytes),
+        StreamSpec("SIGNALS", ("pred.>", "decision.>"), s.signals_max_age_s, s.signals_max_bytes),
+        StreamSpec("ALERTS", ("alert.>",), s.alerts_max_age_s, s.alerts_max_bytes),
+        StreamSpec("DEADLETTER", ("dlq.>",), s.deadletter_max_age_s, s.deadletter_max_bytes),
+    )
+
 
 Handler = Callable[[AnyEvent], Awaitable[None]]
+
+
+class BufferedSink(Protocol):
+    def add(self, event: AnyEvent) -> None: ...
+
+    def should_flush(self) -> bool: ...
+
+    async def flush(self) -> None: ...
+
+    def discard(self) -> None: ...
+
+
+def stream_for(subj: str, specs: tuple[StreamSpec, ...]) -> str:
+    """Resolve the stream that captures a subject without asking the server.
+
+    Consumers then need no permission on $JS.API.STREAM.NAMES (least privilege).
+    """
+    root = subj.split(".", 1)[0]
+    for spec in specs:
+        if any(pattern.split(".", 1)[0] == root for pattern in spec.subjects):
+            return spec.name
+    raise LookupError(f"no stream captures subject {subj!r}")
 
 
 def subject(root: str, instrument: str) -> str:
@@ -74,9 +101,16 @@ def subject(root: str, instrument: str) -> str:
 
 
 class EventBus:
-    def __init__(self, settings: BusSettings, client_name: str) -> None:
+    def __init__(
+        self,
+        settings: BusSettings,
+        client_name: str,
+        on_fatal: Callable[[BaseException], None] | None = None,
+    ) -> None:
         self._settings = settings
         self._name = client_name
+        self._on_fatal = on_fatal
+        self._specs = stream_specs(settings)
         self._nc: Client | None = None
         self._js: JetStreamContext | None = None
         self._tasks: list[asyncio.Task[None]] = []
@@ -109,7 +143,7 @@ class EventBus:
 
     async def ensure_streams(self) -> None:
         """Create or update streams. Run once by the operator CLI, not by every service."""
-        for spec in STREAMS:
+        for spec in self._specs:
             config = StreamConfig(
                 name=spec.name,
                 subjects=list(spec.subjects),
@@ -117,7 +151,7 @@ class EventBus:
                 discard=DiscardPolicy.OLD,
                 max_age=spec.max_age_s,
                 max_bytes=spec.max_bytes,
-                duplicate_window=120,
+                duplicate_window=self._settings.duplicate_window_s,
             )
             try:
                 await self.js.stream_info(spec.name)
@@ -136,12 +170,97 @@ class EventBus:
 
     def subscribe(self, subj: str, durable: str, handler: Handler, *, batch: int = 256) -> None:
         """Start a durable pull consumer in the background."""
-        self._tasks.append(asyncio.create_task(self._consume(subj, durable, handler, batch)))
+        self._watch(asyncio.create_task(self._consume(subj, durable, handler, batch)))
+
+    def subscribe_buffered(
+        self, subj: str, durable: str, sink: BufferedSink, *, ack_wait_s: float, max_pending: int
+    ) -> None:
+        """Consumer for sinks that write in batches (e.g. Parquet).
+
+        Messages are acked only after `sink.flush()` has durably written them, so a crash
+        between receipt and write causes redelivery, never loss. Redelivered duplicates are
+        removed downstream by event_id.
+        """
+        self._watch(
+            asyncio.create_task(
+                self._consume_buffered(subj, durable, sink, ack_wait_s, max_pending)
+            )
+        )
+
+    def _watch(self, task: asyncio.Task[None]) -> None:
+        """A consumer loop that dies is fatal: report it instead of failing silently."""
+        self._tasks.append(task)
+
+        def _done(t: asyncio.Task[None]) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is None:
+                return
+            log.error("bus.consumer_crashed", error=repr(exc))
+            if self._on_fatal is not None:
+                self._on_fatal(exc)
+
+        task.add_done_callback(_done)
+
+    async def _consume_buffered(
+        self, subj: str, durable: str, sink: BufferedSink, ack_wait_s: float, max_pending: int
+    ) -> None:
+        sub = await self.js.pull_subscribe(
+            subj,
+            durable=durable,
+            stream=stream_for(subj, self._specs),
+            config=ConsumerConfig(
+                ack_wait=ack_wait_s,
+                max_deliver=self._settings.max_deliver,
+                max_ack_pending=max_pending,
+            ),
+        )
+        pending: list[Msg] = []
+        while True:
+            stopping = self._stopping.is_set()
+            if not stopping:
+                try:
+                    for msg in await sub.fetch(min(1024, max_pending), timeout=1.0):
+                        try:
+                            sink.add(decode(msg.data))
+                        except msgspec.DecodeError as exc:
+                            await self._on_handler_failure(msg, durable, exc, final=True)
+                            continue
+                        pending.append(msg)
+                except TimeoutError:
+                    pass
+            if pending and (stopping or sink.should_flush()):
+                await self._flush_sink(sink, pending, durable)
+                pending = []
+            if stopping:
+                return
+
+    async def _flush_sink(self, sink: BufferedSink, pending: list[Msg], durable: str) -> None:
+        with _tracer.start_as_current_span(f"flush {durable}") as span:
+            span.set_attribute("messaging.batch.message_count", len(pending))
+            try:
+                await sink.flush()
+            except Exception as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR))
+                sink.discard()
+                log.error(
+                    "bus.flush_failed", consumer=durable, messages=len(pending), error=repr(exc)
+                )
+                for msg in pending:
+                    await msg.nak(delay=self._settings.retry_max_delay_s)
+                CONSUMED.labels(durable, "retried").inc(len(pending))
+                return
+        for msg in pending:
+            await msg.ack()
+        CONSUMED.labels(durable, "ok").inc(len(pending))
 
     async def _consume(self, subj: str, durable: str, handler: Handler, batch: int) -> None:
         sub = await self.js.pull_subscribe(
             subj,
             durable=durable,
+            stream=stream_for(subj, self._specs),
             config=ConsumerConfig(
                 ack_wait=self._settings.ack_wait_s,
                 max_deliver=self._settings.max_deliver,
@@ -176,9 +295,11 @@ class EventBus:
             await msg.ack()
             CONSUMED.labels(durable, "ok").inc()
 
-    async def _on_handler_failure(self, msg: Msg, durable: str, exc: Exception) -> None:
+    async def _on_handler_failure(
+        self, msg: Msg, durable: str, exc: Exception, *, final: bool = False
+    ) -> None:
         attempt = msg.metadata.num_delivered
-        if attempt >= self._settings.max_deliver:
+        if final or attempt >= self._settings.max_deliver:
             headers = dict(msg.headers or {})
             headers.update({"x-error": repr(exc)[:500], "x-consumer": durable})
             await self.js.publish(f"dlq.{msg.subject}", msg.data, headers=headers)
@@ -186,7 +307,9 @@ class EventBus:
             CONSUMED.labels(durable, "dead_lettered").inc()
             log.error("bus.dead_lettered", subject=msg.subject, consumer=durable, error=repr(exc))
             return
-        delay = min(2.0**attempt * 0.1, 10.0)
+        delay = min(
+            2.0**attempt * self._settings.retry_base_delay_s, self._settings.retry_max_delay_s
+        )
         await msg.nak(delay=delay)
         CONSUMED.labels(durable, "retried").inc()
         log.warning("bus.retry", subject=msg.subject, attempt=attempt, delay_s=delay)
