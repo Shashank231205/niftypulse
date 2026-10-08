@@ -60,6 +60,10 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pandas-stubs>=3.0.5.260914",
+    "ziglang>=0.13",
+    "cmake>=3.30",
+    "ninja>=1.11",
+    "pybind11>=2.13",
 ]
 
 [build-system]

@@ -163,6 +163,39 @@ def research_execution(
     typer.echo(json.dumps(out["execution"], indent=2))
 
 
+@research.command("native-bench")
+def research_native_bench(
+    binary: str = typer.Option(..., help="Path to the compiled replay_bench executable"),
+    instrument: str = typer.Option(...),
+    start: str = typer.Option(...),
+    end: str = typer.Option(...),
+    mlp: str = typer.Option(None, help="Optional .npmlp student weights for inference timing"),
+) -> None:
+    """Parity and latency of the C++ feature engine against the Python reference."""
+    import json
+    from datetime import date
+    from pathlib import Path
+
+    from niftypulse.core.config import feature_settings, feed_settings, lake_settings
+    from niftypulse.core.config import research_settings as rs
+    from niftypulse.marketdata.tick_store import TickReader
+    from niftypulse.research.native import run as run_native
+
+    report = run_native(
+        Path(binary),
+        TickReader(lake_settings().root),
+        instrument,
+        date.fromisoformat(start),
+        date.fromisoformat(end),
+        feature_settings(),
+        feed_settings().publish_depth,
+        Path(rs().artifacts_root) / "native",
+        Path(mlp) if mlp else None,
+    )
+    (Path(rs().artifacts_root) / "native" / "report.json").write_text(json.dumps(report, indent=2))
+    typer.echo(json.dumps(report, indent=2))
+
+
 @app.command()
 def promote(
     model_id: str, actor: str = typer.Option(..., help="Who is promoting (audited)")

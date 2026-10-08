@@ -335,7 +335,7 @@ class BinanceUsdmFeed(BinanceFeed):
     venue = Venue.BINANCE_USDM
     _rule = _UsdmRule()
     _kind = InstrumentKind.PERPETUAL
-    _trade_stream = "aggTrade"
+    _trade_stream = "trade"
     _depth_path = "/fapi/v1/depth"
     _info_path = "/fapi/v1/exchangeInfo"
 
