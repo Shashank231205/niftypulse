@@ -54,16 +54,40 @@ class TelemetrySettings(_Base):
     metrics_port: int
 
 
-class FeedSettings(_Base):
+class BrokerSettings(_Base):
+    """Upstox app credentials and endpoints, used by the login flow and the feed."""
+
     model_config = SettingsConfigDict(env_prefix="UPSTOX_")
 
     api_key: SecretStr
     api_secret: SecretStr
     redirect_uri: str
-    access_token: SecretStr
-    instruments: list[str]
+    api_base_url: str
+    instrument_master_url: str
+    token_file: str
+    http_timeout_s: float = 10.0
+
+
+class UniverseSettings(_Base):
+    """What the recorder subscribes to. Contracts are resolved daily, never hardcoded."""
+
+    model_config = SettingsConfigDict(env_prefix="UNIVERSE_")
+
+    futures: list[str]
+    equities: list[str]
+    indices: list[str]
+    option_underlying: str
+    option_index_key: str
+    option_strikes_each_side: int = 10
+
+
+class FeedSettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="FEED_")
+
+    mode: str = "full"
     reconnect_base_s: float = 1.0
     reconnect_max_s: float = 60.0
+    stale_after_s: float = 15.0
 
 
 class LakeSettings(_Base):
@@ -117,3 +141,13 @@ def lake_settings() -> LakeSettings:
 @lru_cache
 def gateway_settings() -> GatewaySettings:
     return GatewaySettings()
+
+
+@lru_cache
+def broker_settings() -> BrokerSettings:
+    return BrokerSettings()
+
+
+@lru_cache
+def universe_settings() -> UniverseSettings:
+    return UniverseSettings()
