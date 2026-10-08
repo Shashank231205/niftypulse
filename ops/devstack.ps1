@@ -60,7 +60,7 @@ function Write-PrometheusTargets([string]$Path) {
 # Each returns @{ Exe; Args; Env } and may prepare files first.
 
 $Services = @('recorder', 'archiver', 'featurizer', 'predictor', 'strategy', 'monitor', 'gateway')
-$InfraOrder = @('nats', 'postgres', 'jaeger', 'prometheus', 'grafana')
+$InfraOrder = @('nats', 'postgres', 'jaeger', 'prometheus')
 
 function Get-Spec([string]$Name, [bool]$Prepare) {
     switch ($Name) {
@@ -97,22 +97,6 @@ function Get-Spec([string]$Name, [bool]$Prepare) {
             return @{ Exe = Need 'PROMETHEUS_BIN'; Env = @{}
                 Args = @("--config.file=$cfg", "--storage.tsdb.path=$(Join-Path $Data 'prometheus')",
                     "--web.listen-address=$(Need 'PROMETHEUS_LISTEN')") }
-        }
-        'grafana' {
-            $home_ = Need 'GRAFANA_HOME'
-            New-Item -ItemType Directory -Force (Join-Path $Data 'grafana') | Out-Null
-            return @{ Exe = Join-Path (Join-Path $home_ 'bin') 'grafana.exe'; Args = @('server', '--homepath', $home_)
-                Env = @{
-                    GF_SERVER_HTTP_ADDR            = Need 'GRAFANA_HTTP_ADDR'
-                    GF_SERVER_HTTP_PORT            = Need 'GRAFANA_HTTP_PORT'
-                    GF_SECURITY_ADMIN_PASSWORD     = Need 'GRAFANA_ADMIN_PASSWORD'
-                    GF_PATHS_DATA                  = Join-Path $Data 'grafana'
-                    GF_PATHS_LOGS                  = $LogDir
-                    GF_PATHS_PROVISIONING          = Join-Path $Root 'ops/grafana/provisioning'
-                    GF_ANALYTICS_REPORTING_ENABLED = 'false'
-                    GF_ANALYTICS_CHECK_FOR_UPDATES = 'false'
-                    GF_AUTH_ANONYMOUS_ENABLED      = 'false'
-                } }
         }
         default {
             if ($Services -notcontains $Name) { throw "unknown target $Name" }
