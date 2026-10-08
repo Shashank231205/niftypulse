@@ -174,6 +174,80 @@ class FeedSettings(_Base):
     stale_after_s: float = 15.0
 
 
+class FeatureSettings(_Base):
+    """Feature definitions. Any change produces a new feature-set id."""
+
+    model_config = SettingsConfigDict(env_prefix="FEATURES_")
+
+    leader_instrument: str
+    windows_s: list[float] = [1.0, 5.0, 30.0]
+    rv_windows_s: list[float] = [5.0, 30.0, 300.0]
+    ofi_levels: int = 5
+    history_s: float = 60.0
+
+
+class LabelSettings(_Base):
+    """Targets. A move counts as up/down only if it beats the half-spread times
+    `spread_multiple` (and at least `min_move_bps`), so labels are cost-aware."""
+
+    model_config = SettingsConfigDict(env_prefix="LABELS_")
+
+    horizons_s: list[float] = [1.0, 5.0, 30.0]
+    vol_horizon_s: float = 30.0
+    spread_multiple: float = 1.0
+    min_move_bps: float = 0.5
+    sample_interval_ms: int = 1000
+
+
+class ModelSettings(_Base):
+    """Hyperparameters for every model family; defaults are documented starting points."""
+
+    model_config = SettingsConfigDict(env_prefix="MODEL_")
+
+    seed: int = 7
+    n_threads: int = 4
+    early_stopping_rounds: int = 50
+    logistic_c: float = 0.1
+    gbm_learning_rate: float = 0.03
+    gbm_num_leaves: int = 31
+    gbm_min_child_samples: int = 200
+    gbm_subsample: float = 0.8
+    gbm_colsample: float = 0.8
+    gbm_l2: float = 5.0
+    gbm_max_rounds: int = 2000
+    xgb_max_depth: int = 6
+    seq_len: int = 30
+    seq_hidden: int = 64
+    seq_layers: int = 2
+    seq_heads: int = 4
+    seq_dropout: float = 0.1
+    seq_epochs: int = 30
+    seq_batch_size: int = 512
+    seq_learning_rate: float = 1e-3
+    seq_weight_decay: float = 1e-4
+    seq_patience: int = 5
+    student_hidden: int = 32
+    distill_temperature: float = 2.0
+    distill_alpha: float = 0.7
+    prune_amount: float = 0.5
+
+
+class ResearchSettings(_Base):
+    """Validation protocol and artifact locations."""
+
+    model_config = SettingsConfigDict(env_prefix="RESEARCH_")
+
+    artifacts_root: str
+    cv_splits: int = 5
+    embargo_s: float = 60.0
+    holdout_fraction: float = 0.2
+    min_abs_score: float = 0.1
+    bootstrap_block: int = 300
+    leakage_shuffle_block: int = 300
+    leakage_max_abs_ic: float = 0.5
+    leakage_max_shuffled_skill: float = 0.01
+
+
 class LakeSettings(_Base):
     model_config = SettingsConfigDict(env_prefix="LAKE_")
 
@@ -256,3 +330,23 @@ def migration_settings() -> MigrationSettings:
 @lru_cache
 def postgres_admin_settings() -> PostgresAdminSettings:
     return PostgresAdminSettings()
+
+
+@lru_cache
+def feature_settings() -> FeatureSettings:
+    return FeatureSettings()
+
+
+@lru_cache
+def label_settings() -> LabelSettings:
+    return LabelSettings()
+
+
+@lru_cache
+def model_settings() -> ModelSettings:
+    return ModelSettings()
+
+
+@lru_cache
+def research_settings() -> ResearchSettings:
+    return ResearchSettings()

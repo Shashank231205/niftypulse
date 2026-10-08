@@ -58,6 +58,7 @@ dev = [
     "mypy>=1.13",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pandas-stubs>=3.0.5.260914",
 ]
 
 [build-system]
@@ -82,8 +83,14 @@ plugins = ["pydantic.mypy"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["nats.*", "pyarrow.*", "duckdb.*", "upstox_client.*", "sortedcontainers.*", "asyncpg.*"]
+module = ["nats.*", "pyarrow.*", "duckdb.*", "upstox_client.*", "sortedcontainers.*", "asyncpg.*", "sklearn.*", "scipy.*", "lightgbm.*", "xgboost.*", "hmmlearn.*", "cvxpy.*", "onnxruntime.*", "optuna.*", "mlflow.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# PyTorch / scikit-learn / LightGBM return untyped values; keep strictness elsewhere.
+module = ["niftypulse.models.*", "niftypulse.regime.*", "niftypulse.policy.*", "niftypulse.research.*"]
+warn_return_any = false
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
