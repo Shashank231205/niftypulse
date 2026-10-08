@@ -87,6 +87,10 @@ module = ["nats.*", "pyarrow.*", "duckdb.*", "upstox_client.*", "sortedcontainer
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = ["cvxpy", "cvxpy.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
 # PyTorch / scikit-learn / LightGBM return untyped values; keep strictness elsewhere.
 module = ["niftypulse.models.*", "niftypulse.regime.*", "niftypulse.policy.*", "niftypulse.research.*"]
 warn_return_any = false

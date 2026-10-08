@@ -248,6 +248,63 @@ class ResearchSettings(_Base):
     leakage_max_shuffled_skill: float = 0.01
 
 
+class RegimeSettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="REGIME_")
+
+    seed: int = 7
+    hmm_states: int = 3
+    kalman_level_var: float = 1e-9
+    kalman_velocity_var: float = 1e-12
+    kalman_obs_var: float = 1e-8
+    bocpd_hazard_lambda: float = 600.0
+    bocpd_max_run: int = 600
+    bocpd_recent_window: int = 10
+
+
+class PolicySettings(_Base):
+    """Decision layer: model selection, sizing and execution."""
+
+    model_config = SettingsConfigDict(env_prefix="POLICY_")
+
+    bandit_prior_mean: float = 0.0
+    bandit_prior_var: float = 1.0
+    bandit_noise_var: float = 1.0
+    entry_threshold: float = 0.15
+    max_position: float = 1.0
+    max_gross: float = 2.0
+    risk_aversion: float = 5.0
+    turnover_penalty_bps: float = 1.0
+    covariance_lookback: int = 600
+    exec_parent_lots: int = 10
+    exec_horizon_s: int = 60
+    exec_episodes: int = 400
+    ppo_epochs: int = 8
+    ppo_clip: float = 0.2
+    ppo_gamma: float = 0.99
+    ppo_lambda: float = 0.95
+    ppo_learning_rate: float = 3e-4
+    ppo_hidden: int = 64
+    seed: int = 7
+
+
+class CostSettings(_Base):
+    """Fee schedules (published rates, Oct 2026). Override in .env when venues change them."""
+
+    model_config = SettingsConfigDict(env_prefix="COSTS_")
+
+    binance_spot_maker_bps: float = 10.0
+    binance_spot_taker_bps: float = 10.0
+    binance_usdm_maker_bps: float = 2.0
+    binance_usdm_taker_bps: float = 5.0
+    nse_brokerage_per_order: float = 20.0
+    nse_brokerage_cap_pct: float = 0.05
+    nse_exchange_txn_pct: float = 0.00173
+    nse_sebi_per_crore: float = 10.0
+    nse_stt_sell_pct: float = 0.02
+    nse_stamp_buy_pct: float = 0.002
+    nse_gst_pct: float = 18.0
+
+
 class LakeSettings(_Base):
     model_config = SettingsConfigDict(env_prefix="LAKE_")
 
@@ -350,3 +407,18 @@ def model_settings() -> ModelSettings:
 @lru_cache
 def research_settings() -> ResearchSettings:
     return ResearchSettings()
+
+
+@lru_cache
+def regime_settings() -> RegimeSettings:
+    return RegimeSettings()
+
+
+@lru_cache
+def policy_settings() -> PolicySettings:
+    return PolicySettings()
+
+
+@lru_cache
+def cost_settings() -> CostSettings:
+    return CostSettings()
