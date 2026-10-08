@@ -122,6 +122,10 @@ class EventBus:
             raise RuntimeError("EventBus.connect() has not been called")
         return self._js
 
+    @property
+    def connected(self) -> bool:
+        return self._nc is not None and self._nc.is_connected
+
     async def connect(self) -> None:
         tls: ssl.SSLContext | None = None
         if self._settings.tls_ca_file:
@@ -313,6 +317,18 @@ class EventBus:
         await msg.nak(delay=delay)
         CONSUMED.labels(durable, "retried").inc()
         log.warning("bus.retry", subject=msg.subject, attempt=attempt, delay_s=delay)
+
+    async def subscribe_live(self, subj: str, handler: Handler) -> None:
+        """Core (non-durable) subscription for fan-out to live clients: no replay, no acks."""
+        assert self._nc is not None, "connect() first"
+
+        async def _cb(msg: Msg) -> None:
+            try:
+                await handler(decode(msg.data))
+            except msgspec.DecodeError:
+                log.warning("bus.live_decode_failed", subject=msg.subject)
+
+        await self._nc.subscribe(subj, cb=_cb)
 
     async def close(self) -> None:
         self._stopping.set()

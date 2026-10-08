@@ -28,6 +28,7 @@ dependencies = [
     "tzdata>=2024.2",
     "sortedcontainers>=2.4",
     "truststore>=0.10",
+    "pyjwt>=2.9",
 ]
 
 [project.optional-dependencies]
@@ -75,6 +76,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N", "S", "ASYNC", "RUF", "SIM", "PTH"]
 ignore = ["S101"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option", "fastapi.Depends", "fastapi.Query", "fastapi.Header"]
 
 [tool.mypy]
 python_version = "3.12"

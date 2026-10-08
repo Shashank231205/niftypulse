@@ -4,6 +4,7 @@ import asyncio
 import webbrowser
 from collections import Counter
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import truststore
 import typer
@@ -19,6 +20,9 @@ from niftypulse.core.config import (
 from niftypulse.marketdata.upstox_instruments import InstrumentMaster
 from niftypulse.marketdata.upstox_session import AuthError, UpstoxSession
 
+if TYPE_CHECKING:
+    from niftypulse.research.workflows import Period
+
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
@@ -30,14 +34,23 @@ def _process_setup() -> None:
 
 
 def _services() -> dict[str, Callable[[], None]]:
-    from niftypulse.services import archiver, recorder
+    from niftypulse.services import archiver, featurizer, monitor, predictor, recorder, strategy
+    from niftypulse.services.gateway import app as gateway
 
-    return {"recorder": recorder.main, "archiver": archiver.main}
+    return {
+        "recorder": recorder.main,
+        "archiver": archiver.main,
+        "featurizer": featurizer.main,
+        "predictor": predictor.main,
+        "strategy": strategy.main,
+        "monitor": monitor.main,
+        "gateway": gateway.main,
+    }
 
 
 @app.command()
 def run(service: str) -> None:
-    """Run one long-lived service (recorder, archiver, ...)."""
+    """Run one long-lived service (recorder, archiver, featurizer, predictor, ...)."""
     services = _services()
     if service not in services:
         typer.secho(f"unknown service {service!r}; one of {sorted(services)}", fg="red", err=True)
@@ -62,6 +75,152 @@ def bootstrap() -> None:
         asyncio.run(_run())
     finally:
         telemetry.shutdown()
+
+
+research = typer.Typer(no_args_is_help=True, help="Datasets, training, backtests.")
+app.add_typer(research, name="research")
+
+
+def _period(start: str, end: str, instruments: list[str] | None) -> "Period":
+    from datetime import date
+
+    from niftypulse.research.workflows import Period
+    from niftypulse.services.featurizer import live_instruments
+
+    return Period(
+        instruments or live_instruments(), date.fromisoformat(start), date.fromisoformat(end)
+    )
+
+
+@research.command("dataset")
+def research_dataset(
+    start: str = typer.Option(..., help="First UTC date, YYYY-MM-DD"),
+    end: str = typer.Option(..., help="Last UTC date, YYYY-MM-DD"),
+    instrument: list[str] = typer.Option(None, help="Instrument keys; default: live universe"),
+) -> None:
+    """Replay the tick lake through the feature engine and save a labelled dataset."""
+    from niftypulse.research.workflows import build
+
+    ds = build(_period(start, end, instrument))
+    typer.echo(f"dataset {ds.dataset_id}: {len(ds.frame)} rows, feature set {ds.feature_set}")
+
+
+@research.command("train")
+def research_train(
+    dataset: str = typer.Option(...),
+    horizon: float = typer.Option(5.0, help="Label horizon in seconds"),
+    family: list[str] = typer.Option(
+        ["logistic", "lightgbm", "xgboost", "lstm", "tcn", "transformer"], help="Model families"
+    ),
+) -> None:
+    """Run the full validation protocol and register the resulting bundle."""
+    import json
+
+    from niftypulse.research.workflows import load_dataset, train
+
+    bundle, report = train(load_dataset(dataset), horizon, family)
+    typer.echo(json.dumps({"bundle": bundle.bundle_id, "selection": report["selection"]}, indent=2))
+
+
+@research.command("backtest")
+def research_backtest(
+    bundle: str = typer.Option(...),
+    start: str = typer.Option(...),
+    end: str = typer.Option(...),
+) -> None:
+    """Backtest the bundle's holdout predictions with costs."""
+    import json
+
+    from niftypulse.research.workflows import backtest
+
+    typer.echo(
+        json.dumps(backtest(bundle, _period(start, end, None))["summary"], indent=2, default=float)
+    )
+
+
+@research.command("execution")
+def research_execution(
+    bundle: str = typer.Option(...),
+    dataset: str = typer.Option(...),
+    instrument: str = typer.Option(...),
+    start: str = typer.Option(...),
+    end: str = typer.Option(...),
+) -> None:
+    """Fill-probability model and PPO execution agent versus baselines."""
+    import json
+    from pathlib import Path
+
+    from niftypulse.core.config import research_settings
+    from niftypulse.research.bundle import load_bundle
+    from niftypulse.research.workflows import execution_study, load_dataset
+
+    report_dir = Path(research_settings().artifacts_root) / "reports" / bundle
+    meta = json.loads((report_dir / "training.json").read_text())["bundle"]
+    loaded = load_bundle(Path(meta["path"]), meta["sha256"])
+    out = execution_study(
+        loaded, load_dataset(dataset), instrument, _period(start, end, [instrument])
+    )
+    typer.echo(json.dumps(out["execution"], indent=2))
+
+
+@app.command()
+def promote(
+    model_id: str, actor: str = typer.Option(..., help="Who is promoting (audited)")
+) -> None:
+    """Make a registered bundle the production model (audited)."""
+    from niftypulse.core.config import db_settings
+    from niftypulse.core.db import Database
+    from niftypulse.storage.repositories import AuditRepository, ModelRepository
+
+    async def _run() -> None:
+        db = Database(db_settings())
+        try:
+            async with db.session() as s:
+                repo = ModelRepository(s)
+                if await repo.get(model_id) is None:
+                    raise typer.BadParameter(f"unknown model {model_id}")
+                await repo.promote(model_id, actor)
+                await AuditRepository(s).record(
+                    actor, "model.promote", model_id, "ok", None, None, {"via": "cli"}
+                )
+        finally:
+            await db.close()
+
+    asyncio.run(_run())
+    typer.secho(f"{model_id} is now in production", fg="green")
+
+
+@app.command("create-api-key")
+def create_api_key(
+    principal: str = typer.Option(..., help="Principal id, e.g. alice"),
+    role: str = typer.Option("viewer", help="viewer | operator | admin"),
+) -> None:
+    """Create or rotate an API key. The key is printed once and stored only as a hash."""
+    from niftypulse.core.config import db_settings
+    from niftypulse.core.db import Database
+    from niftypulse.services.gateway.auth import ROLES, new_api_key
+    from niftypulse.storage.repositories import AuditRepository, PrincipalRepository
+
+    if role not in ROLES or "." in principal:
+        raise typer.BadParameter(
+            "role must be viewer/operator/admin; principal must not contain '.'"
+        )
+    key, hashed = new_api_key(principal)
+
+    async def _run() -> None:
+        db = Database(db_settings())
+        try:
+            async with db.session() as s:
+                await PrincipalRepository(s).upsert(principal, role, hashed)
+                await AuditRepository(s).record(
+                    "cli", "principal.key_rotated", principal, "ok", None, None, {"role": role}
+                )
+        finally:
+            await db.close()
+
+    asyncio.run(_run())
+    typer.echo(f"API key for {principal} ({role}). Store it now; it is not shown again:")
+    typer.echo(key)
 
 
 @app.command("db-bootstrap")

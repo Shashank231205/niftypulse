@@ -284,6 +284,7 @@ class PolicySettings(_Base):
     ppo_lambda: float = 0.95
     ppo_learning_rate: float = 3e-4
     ppo_hidden: int = 64
+    paper_notional: float = 10_000.0
     seed: int = 7
 
 
@@ -303,6 +304,18 @@ class CostSettings(_Base):
     nse_stt_sell_pct: float = 0.02
     nse_stamp_buy_pct: float = 0.002
     nse_gst_pct: float = 18.0
+
+
+class MonitorSettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="MONITOR_")
+
+    rolling_window: int = 2000
+    drift_interval_s: float = 300.0
+    drift_sample: int = 5000
+    psi_threshold: float = 0.2
+    clock_interval_s: float = 60.0
+    clock_endpoint: str
+    prediction_stale_s: float = 30.0
 
 
 class LakeSettings(_Base):
@@ -422,3 +435,8 @@ def policy_settings() -> PolicySettings:
 @lru_cache
 def cost_settings() -> CostSettings:
     return CostSettings()
+
+
+@lru_cache
+def monitor_settings() -> MonitorSettings:
+    return MonitorSettings()
