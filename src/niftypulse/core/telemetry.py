@@ -1,6 +1,6 @@
 """Logs, traces and metrics for every service.
 
-Every log line carries the active trace_id and span_id, so a log entry in Grafana links
+Every log line carries the active trace_id and span_id, so any log entry links
 straight to its trace in Jaeger. Trace context travels between services inside NATS
 message headers (W3C traceparent), which gives one trace per tick across the whole pipeline.
 """

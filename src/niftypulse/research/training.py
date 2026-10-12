@@ -5,7 +5,7 @@
 2. Purged walk-forward CV on the development set for every model family. Per fold, the
    regime HMM is fitted on that fold's training rows only; the fold's training block is
    split again by time into fit / early-stopping / calibration slices.
-3. Leakage checks (shuffled labels, suspicious-feature scan, split overlap).
+3. Leakage checks (shifted labels, suspicious-feature scan, split overlap).
 4. Model selection on CV log-loss skill only. The holdout is then scored once for every
    family, so the report shows how CV ranking held up out of sample, good or bad.
 5. Volatility models (HAR baseline vs GBM) by QLIKE.

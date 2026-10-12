@@ -1,8 +1,8 @@
 """Python vs C++ feature engine: parity and speed on real recorded ticks.
 
 Exports one instrument's events to the NPEV1 binary format, runs `replay_bench`, checks
-that every C++ feature matches the Python reference (relative plus absolute tolerance), and times the
-Python engine on the same events, so the speed-up is measured, not assumed.
+that every C++ feature matches the Python reference (relative plus absolute tolerance),
+and times the Python engine on the same events, so the speed-up is measured, not assumed.
 """
 
 import json
