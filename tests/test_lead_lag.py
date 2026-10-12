@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from niftypulse.research.lead_lag import (
+    benjamini_hochberg,
     discretise,
     lead_lag_matrix,
     significance,
@@ -54,3 +55,8 @@ def test_matrix_finds_the_leader_from_mid_prices() -> None:
     best = max(rows, key=lambda r: r.excess_bits)
     assert (best.source, best.target, best.lag_steps) == ("A", "B", 1)
     assert best.p_value < 0.05
+
+
+def test_benjamini_hochberg_matches_hand_calculation() -> None:
+    q = benjamini_hochberg(np.array([0.01, 0.04, 0.03, 0.5]))
+    np.testing.assert_allclose(q, [0.04, 0.04 * 4 / 3, 0.04 * 4 / 3, 0.5])

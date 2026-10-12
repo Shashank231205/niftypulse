@@ -10,11 +10,12 @@ far above TE(spot -> perp) says the perpetual leads. Returns are discretised int
 (down, flat, up) by tercile. The plug-in estimator is biased upwards, so every value is
 compared with circular-shift surrogates of X: a shift keeps X's own autocorrelation but
 breaks its timing with Y. Reported "excess" is TE minus the surrogate mean, and the
-p-value is the share of surrogates at or above the observed TE.
+p-value is the share of surrogates at or above the observed TE. Many pairs and lags are
+tested at once, so each result also carries a Benjamini-Hochberg q-value.
 """
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import permutations
 from typing import Any
 
@@ -61,6 +62,7 @@ class LeadLag:
     te_bits: float
     excess_bits: float
     p_value: float
+    q_value: float = float("nan")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +72,7 @@ class LeadLag:
             "te_bits": self.te_bits,
             "excess_bits": self.excess_bits,
             "p_value": self.p_value,
+            "q_value": self.q_value,
         }
 
 
@@ -84,6 +87,17 @@ def significance(
     null = np.array([transfer_entropy(np.roll(source, s), target, lag) for s in shifts])
     p = (1 + int((null >= observed).sum())) / (1 + surrogates)
     return observed, observed - float(null.mean()), p
+
+
+def benjamini_hochberg(p_values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """False-discovery-rate adjusted p-values (step-up, monotone)."""
+    n = len(p_values)
+    order = np.argsort(p_values)
+    ranked = p_values[order] * n / np.arange(1, n + 1)
+    adjusted = np.minimum.accumulate(ranked[::-1])[::-1].clip(max=1.0)
+    out = np.empty(n)
+    out[order] = adjusted
+    return out
 
 
 def aligned_symbols(frame: pd.DataFrame, return_col: str) -> pd.DataFrame:
@@ -114,4 +128,5 @@ def lead_lag_matrix(
         for lag in lags:
             te, excess, p = significance(x, y, lag, surrogates, min_shift, seed + lag)
             results.append(LeadLag(str(src), str(dst), lag, te, excess, p))
-    return results
+    q = benjamini_hochberg(np.array([r.p_value for r in results]))
+    return [replace(r, q_value=float(qi)) for r, qi in zip(results, q, strict=True)]
