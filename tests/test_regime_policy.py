@@ -50,9 +50,16 @@ def test_thompson_bandit_learns_the_better_arm() -> None:
 def test_convex_sizer_respects_limits_and_signal_sign() -> None:
     s = PolicySettings(_env_file=None)  # type: ignore[call-arg]
     sizer = ConvexSizer(s, 3)
-    w = sizer.solve(np.array([5.0, -5.0, 0.0]), np.eye(3), np.zeros(3))
+    w = sizer.solve(np.array([5.0, -5.0, 0.0]), np.eye(3), np.zeros(3), np.full(3, 1.0))
     assert w[0] > 0 > w[1] and abs(w[2]) < 1e-6
     assert np.all(np.abs(w) <= s.max_position + 1e-6) and np.abs(w).sum() <= s.max_gross + 1e-6
+
+
+def test_convex_sizer_does_not_trade_moves_smaller_than_costs() -> None:
+    s = PolicySettings(_env_file=None)  # type: ignore[call-arg]
+    sizer = ConvexSizer(s, 2)
+    w = sizer.solve(np.array([3.0, 3.0]), np.eye(2), np.zeros(2), np.array([10.0, 0.5]))
+    assert abs(w[0]) < 1e-6 < w[1]  # 3 bps expected move cannot pay a 10 bps crossing
 
 
 def test_cost_models() -> None:

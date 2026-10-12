@@ -13,7 +13,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from niftypulse.backtest.costs import CostModel, Side
+from niftypulse.backtest.costs import CostModel, Side, crossing_cost_bps
 from niftypulse.backtest.simulator import TapeSimulator, tape_index
 from niftypulse.core.config import PolicySettings
 from niftypulse.policy.sizing import ConvexSizer, expected_return_bps, shrunk_covariance
@@ -127,7 +127,17 @@ def run_signal_backtest(
             )
             mu[np.abs(proba[:, 2] - proba[:, 0]) < policy.entry_threshold] = 0.0
             cov = shrunk_covariance(np.array(returns_window))
-            target = sizer.solve(mu, cov, w)
+            cost_now = np.array(
+                [
+                    crossing_cost_bps(
+                        costs[k], tapes[k].bid[idx[k][t]], tapes[k].ask[idx[k][t]], 1.0
+                    )
+                    if idx[k][t] >= 0
+                    else np.nan
+                    for k in instruments
+                ]
+            )
+            target = sizer.solve(mu, cov, w, cost_now)
             delta = target - w
             for j, k in enumerate(instruments):
                 if abs(delta[j]) < 1e-6 or idx[k][t] < 0:

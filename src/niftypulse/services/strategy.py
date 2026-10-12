@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from niftypulse.backtest.costs import Side, cost_model_for
+from niftypulse.backtest.costs import Side, cost_model_for, crossing_cost_bps
 from niftypulse.core import telemetry
 from niftypulse.core.bus import EventBus, current_trace_id, subject
 from niftypulse.core.config import bus_settings, cost_settings, db_settings, policy_settings
@@ -95,7 +95,13 @@ class Strategy(Service):
             if abs(proba[2] - proba[0]) >= self._p.entry_threshold:
                 up, down = self._bundle.conditional_means.get(key, (0.0, 0.0))
                 mu[j] = expected_return_bps(proba[None, :], up, down)[0]
-        target = self._sizer.solve(mu, shrunk_covariance(returns), self._weights)
+        cost = np.array(
+            [
+                crossing_cost_bps(self._costs[k], m.bid, m.ask, self._p.paper_notional)
+                for k, m in self._markets.items()
+            ]
+        )
+        target = self._sizer.solve(mu, shrunk_covariance(returns), self._weights, cost)
         for j, key in enumerate(self._instruments):
             delta = float(target[j] - self._weights[j])
             m = self._markets[key]

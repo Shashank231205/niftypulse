@@ -25,6 +25,14 @@ class CostModel(ABC):
         return 1e4 * self.fee(notional, side, liquidity) / notional if notional else 0.0
 
 
+def crossing_cost_bps(model: CostModel, bid: float, ask: float, notional: float) -> float:
+    """One-way cost of a marketable order: half the spread plus the taker fee (both sides
+    averaged, since some venues tax only buys or only sells)."""
+    half_spread = 1e4 * (ask - bid) / (ask + bid)
+    fee = 0.5 * (model.fee_bps("buy", "taker", notional) + model.fee_bps("sell", "taker", notional))
+    return half_spread + fee
+
+
 class BinanceCosts(CostModel):
     currency = "USDT"
 

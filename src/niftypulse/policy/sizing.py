@@ -1,11 +1,13 @@
 """Position sizing as a convex program.
 
-    maximise    mu' w  -  gamma * w' S w  -  kappa * ||w - w_prev||_1
+    maximise    mu' w  -  gamma * w' S w  -  sum_i (c_i + kappa) * |w_i - w_prev_i|
     subject to  |w_i| <= max_position,  ||w||_1 <= max_gross
 
-mu is the expected forward return in bps implied by the calibrated probabilities,
-S a Ledoit-Wolf shrunk covariance of recent returns, and the L1 term charges turnover
-so the book does not churn on small signal changes. Solved with CVXPY.
+mu is the expected forward return in bps implied by the calibrated probabilities and S a
+Ledoit-Wolf shrunk covariance of recent returns. c_i is instrument i's current one-way
+trading cost (half-spread plus taker fee), so a position is only changed when the
+expected move pays for crossing; kappa is an extra margin against churn on small signal
+changes. Solved with CVXPY.
 """
 
 import cvxpy as cp
@@ -32,22 +34,26 @@ class ConvexSizer:
         s = settings
         self._mu = cp.Parameter(n_assets)
         self._prev = cp.Parameter(n_assets)
+        self._cost = cp.Parameter(n_assets, nonneg=True)
         self._chol = cp.Parameter((n_assets, n_assets))
         self.w = cp.Variable(n_assets)
         risk = cp.sum_squares(self._chol.T @ self.w)
         objective = cp.Maximize(
             self._mu @ self.w
             - s.risk_aversion * risk
-            - s.turnover_penalty_bps * cp.norm1(self.w - self._prev)
+            - cp.sum(cp.multiply(self._cost + s.turnover_penalty_bps, cp.abs(self.w - self._prev)))
         )
         constraints = [cp.abs(self.w) <= s.max_position, cp.norm1(self.w) <= s.max_gross]
         self._problem = cp.Problem(objective, constraints)
 
-    def solve(self, mu_bps: FloatArray, cov_bps: FloatArray, prev: FloatArray) -> FloatArray:
+    def solve(
+        self, mu_bps: FloatArray, cov_bps: FloatArray, prev: FloatArray, cost_bps: FloatArray
+    ) -> FloatArray:
         """Parameterised once (DPP), so each re-solve reuses the compiled problem."""
         jitter = 1e-9 * np.eye(len(mu_bps))
         self._mu.value = mu_bps
         self._prev.value = prev
+        self._cost.value = np.nan_to_num(np.maximum(cost_bps, 0.0), nan=1e4)
         self._chol.value = np.linalg.cholesky(cov_bps + jitter)
         self._problem.solve(solver=cp.CLARABEL)
         if self.w.value is None:
