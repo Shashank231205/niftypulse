@@ -1,7 +1,7 @@
 """Python vs C++ feature engine: parity and speed on real recorded ticks.
 
 Exports one instrument's events to the NPEV1 binary format, runs `replay_bench`, checks
-that every C++ feature matches the Python reference (relative tolerance), and times the
+that every C++ feature matches the Python reference (relative plus absolute tolerance), and times the
 Python engine on the same events, so the speed-up is measured, not assumed.
 """
 
@@ -34,6 +34,10 @@ def export_events(events: list[MarketEvent], path: Path, depth: int) -> None:
             else:
                 agg = 1 if ev.aggressor == "buy" else -1
                 f.write(struct.pack("<Bqddb", 1, ev.ts_exchange, ev.price, ev.qty, agg))
+
+
+PARITY_RTOL = 1e-6
+PARITY_ATOL = 1e-9
 
 
 def python_features(events: list[MarketEvent], s: FeatureSettings) -> tuple[np.ndarray, list[int]]:
@@ -89,19 +93,20 @@ def run(
     cpp = np.frombuffer(raw[8:], dtype="<f8").reshape(n_rows, n_cols)
     py, py_times = python_features(events, s)
     same_shape = py.shape == cpp.shape
-    max_rel = (
-        float(np.max(np.abs(py - cpp) / np.maximum(np.abs(py), 1e-9)))
-        if same_shape
-        else float("inf")
-    )
+    # Relative error alone explodes where a feature is ~0 (1e-12 in Python vs exact 0 in
+    # C++), so parity is the usual |py - cpp| <= atol + rtol * |py| test.
+    max_abs = float(np.max(np.abs(py - cpp))) if same_shape else float("inf")
+    close = same_shape and bool(np.allclose(cpp, py, rtol=PARITY_RTOL, atol=PARITY_ATOL))
     py_p50 = float(np.percentile(py_times, 50))
     return {
         "instrument": instrument,
         "events": len(events),
         "parity": {
             "shape_match": same_shape,
-            "max_relative_error": max_rel,
-            "passed": same_shape and max_rel < 1e-6,
+            "max_abs_error": max_abs,
+            "rtol": PARITY_RTOL,
+            "atol": PARITY_ATOL,
+            "passed": close,
         },
         "python_feature_update_ns_p50": py_p50,
         "python_feature_update_ns_p99": float(np.percentile(py_times, 99)),
