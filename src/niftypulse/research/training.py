@@ -356,9 +356,10 @@ def _compress(
             ctx, student.predict_proba(hold_in), full, hold, label, ret, prior
         ),
     }
-    out["teacher_latency_us"] = _torch_latency_us(
-        teacher, full.iloc[hold[: ctx.model.seq_len * 4]], features, ctx
-    )
+    # windows are per instrument, so time on one instrument's consecutive holdout rows
+    first = full["instrument"].to_numpy()[hold[0]]
+    one = hold[full["instrument"].to_numpy()[hold] == first][: ctx.model.seq_len * 2]
+    out["teacher_latency_us"] = _torch_latency_us(teacher, full.iloc[one], features, ctx)
     f32 = root / "student.onnx"
     student.export_onnx(f32)
     student.prune(ctx.model.prune_amount)
