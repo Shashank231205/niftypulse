@@ -154,6 +154,11 @@ class _SequenceModel(DirectionModel):
         self._step_ns = int(np.median(np.diff(ts))) if len(ts) > 1 else _NS
         wt, okt = self._windows(train)
         wv, okv = self._windows(valid)
+        if not okt.any() or not okv.any():
+            raise ValueError(
+                f"no complete {s.seq_len}-step windows in the training or early-stopping "
+                "slice; the period is too short for sequence models"
+            )
         yt, yv = class_index(y_train), class_index(y_valid)
         self._prior = np.bincount(yt, minlength=3) / len(yt)
         self._scaler.fit(wt[okt])
