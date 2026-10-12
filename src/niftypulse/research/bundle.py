@@ -98,7 +98,7 @@ def load_bundle(folder: Path, expected_sha256: str) -> ModelBundle:
             f"bundle {folder.name} hash mismatch: "
             f"registry {expected_sha256[:12]}, file {actual[:12]}"
         )
-    bundle = pickle.loads(payload)  # noqa: S301 - integrity verified above
+    bundle = pickle.loads(payload)  # noqa: S301  # nosec B301 - integrity verified above
     if not isinstance(bundle, ModelBundle):
         raise TypeError("artifact is not a ModelBundle")
     return bundle

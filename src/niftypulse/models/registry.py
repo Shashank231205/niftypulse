@@ -5,11 +5,9 @@ Every direction model, from logistic regression to the transformer, implements
 treat them interchangeably. Models are created by family name from configuration.
 """
 
-import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
@@ -63,18 +61,6 @@ class DirectionModel(ABC):
     @abstractmethod
     def predict_proba(self, data: ModelInput) -> FloatArray:
         """(n, 3) probabilities for (down, flat, up)."""
-
-    def save(self, path: Path) -> None:
-        path.write_bytes(pickle.dumps(self))
-
-    @staticmethod
-    def load(path: Path) -> "DirectionModel":
-        # Artifacts are produced by our own training pipeline and verified by sha256
-        # against the model registry before loading.
-        model = pickle.loads(path.read_bytes())  # noqa: S301
-        if not isinstance(model, DirectionModel):
-            raise TypeError(f"{path} is not a DirectionModel artifact")
-        return model
 
     def describe(self) -> dict[str, Any]:
         return {"family": self.family}
