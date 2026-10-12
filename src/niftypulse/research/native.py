@@ -36,9 +36,7 @@ def export_events(events: list[MarketEvent], path: Path, depth: int) -> None:
                 f.write(struct.pack("<Bqddb", 1, ev.ts_exchange, ev.price, ev.qty, agg))
 
 
-def python_features(
-    events: list[MarketEvent], s: FeatureSettings
-) -> tuple[np.ndarray, list[int]]:
+def python_features(events: list[MarketEvent], s: FeatureSettings) -> tuple[np.ndarray, list[int]]:
     state = MicrostructureState(
         tuple(s.windows_s), tuple(s.rv_windows_s), s.ofi_levels, s.history_s
     )
