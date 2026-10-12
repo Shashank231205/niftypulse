@@ -162,7 +162,7 @@ class TickReader:
                 ORDER BY ts_exchange, ts_recv
                 """,
                 [pattern.as_posix(), start, end],
-            ).arrow()
+            ).to_arrow_table()
         finally:
             con.close()
 
