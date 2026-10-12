@@ -34,7 +34,7 @@ from niftypulse.models.volatility import GBMVolatility, HARVolatility
 from niftypulse.regime.features import add_regime_features, fit_regime_model, regime_columns
 from niftypulse.research.bundle import CalibratedArm, ModelBundle
 from niftypulse.validation.leakage import run_leakage_checks
-from niftypulse.validation.metrics import classification_report, qlike
+from niftypulse.validation.metrics import ClassPrior, classification_report, qlike
 from niftypulse.validation.purged_cv import PurgedWalkForward, holdout_split
 
 log = telemetry.logger(__name__)
@@ -117,17 +117,21 @@ def _report(
     rows: np.ndarray,
     label: str,
     ret: str,
-    prior: np.ndarray,
+    prior: ClassPrior,
 ) -> dict[str, Any]:
     rep = classification_report(
         proba,
         frame[label].to_numpy()[rows],
         frame[ret].to_numpy()[rows],
-        prior,
+        prior.rows(frame["instrument"].to_numpy()[rows]),
         ctx.research.min_abs_score,
         ctx.research.bootstrap_block,
     )
     return rep.as_dict()
+
+
+def _prior(frame: pd.DataFrame, label: str, rows: np.ndarray) -> ClassPrior:
+    return ClassPrior.fit(frame["instrument"].to_numpy()[rows], frame[label].to_numpy()[rows])
 
 
 def run_protocol(dataset: Dataset, ctx: ResearchContext) -> tuple[ModelBundle, dict[str, Any]]:
@@ -154,9 +158,7 @@ def run_protocol(dataset: Dataset, ctx: ResearchContext) -> tuple[ModelBundle, d
     for fold in cv.split(dev_ts):
         hmm = fit_regime_model(dev_frame.iloc[fold.train], ctx.regime)
         fold_frame = add_regime_features(dev_frame, hmm, ctx.regime)
-        prior = np.bincount(
-            class_index(fold_frame[label].to_numpy()[fold.train]), minlength=3
-        ) / len(fold.train)
+        prior = _prior(fold_frame, label, fold.train)
         for family in ctx.families:
             t0 = time.time()
             arm = fit_arm(family, ctx, fold_frame, features, label, fold.train)
@@ -195,7 +197,7 @@ def run_protocol(dataset: Dataset, ctx: ResearchContext) -> tuple[ModelBundle, d
         ret,
         cv,
         lambda tr, te, lab: _lgbm_skill(ctx, tr, te, features, lab),
-        ctx.research.leakage_shuffle_block,
+        ctx.research.leakage_min_shift_fraction,
         ctx.research.leakage_max_abs_ic,
         ctx.research.leakage_max_shuffled_skill,
     ).as_dict()
@@ -203,7 +205,7 @@ def run_protocol(dataset: Dataset, ctx: ResearchContext) -> tuple[ModelBundle, d
     ranked = sorted(
         ctx.families, key=lambda f: report["cv"][f]["mean_log_loss_skill"], reverse=True
     )
-    prior = np.bincount(class_index(full[label].to_numpy()[dev]), minlength=3) / len(dev)
+    prior = _prior(full, label, dev)
     arms: dict[str, CalibratedArm] = {}
     report["holdout"] = {}
     for family in ctx.families:
@@ -236,7 +238,7 @@ def run_protocol(dataset: Dataset, ctx: ResearchContext) -> tuple[ModelBundle, d
         features=features,
         arms={f: arms[f] for f in top},
         hmm=hmm,
-        class_prior=prior,
+        class_prior=prior.overall,
         conditional_means=conditional,
         vol_model=vol_model,
         vol_horizon_s=float(
@@ -275,10 +277,11 @@ def _lgbm_skill(
         early[label].to_numpy(),
     )
     proba = model.predict_proba(ModelInput(test, features))
-    prior = np.bincount(class_index(train[label].to_numpy()), minlength=3) / n
+    prior = _prior(train, label, np.arange(n)).rows(test["instrument"].to_numpy())
     y = class_index(test[label].to_numpy())
-    ll = -np.mean(np.log(np.clip(proba[np.arange(len(y)), y], 1e-7, 1)))
-    base = -np.mean(np.log(np.clip(prior[y], 1e-7, 1)))
+    rows = np.arange(len(y))
+    ll = -np.mean(np.log(np.clip(proba[rows, y], 1e-7, 1)))
+    base = -np.mean(np.log(np.clip(prior[rows, y], 1e-7, 1)))
     return float(1 - ll / base)
 
 
@@ -321,7 +324,7 @@ def _compress(
     dev: np.ndarray,
     hold: np.ndarray,
     teacher: CalibratedArm,
-    prior: np.ndarray,
+    prior: ClassPrior,
 ) -> dict[str, Any]:
     root = Path(ctx.research.artifacts_root) / "compression"
     root.mkdir(parents=True, exist_ok=True)

@@ -3,8 +3,8 @@ import pandas as pd
 import pytest
 
 from niftypulse.models.calibration import BiasedTemperature
-from niftypulse.validation.leakage import block_shuffle, scan_features
-from niftypulse.validation.metrics import classification_report, qlike
+from niftypulse.validation.leakage import scan_features, shift_labels
+from niftypulse.validation.metrics import ClassPrior, classification_report, qlike
 from niftypulse.validation.purged_cv import PurgedWalkForward, assert_no_overlap, holdout_split
 
 NS = 1_000_000_000
@@ -33,10 +33,15 @@ def test_holdout_is_last_block_behind_gap() -> None:
     assert len(hold) == pytest.approx(200, abs=2)
 
 
-def test_block_shuffle_keeps_values_and_breaks_alignment() -> None:
-    y = np.repeat(np.arange(20.0), 50)
-    s = block_shuffle(y, 50, seed=1)
-    assert sorted(s) == sorted(y) and not np.array_equal(s, y)
+def test_shift_labels_rotates_each_instrument_far_enough() -> None:
+    inst = np.repeat(np.array(["a", "b"], dtype=object), 1000)
+    y = np.tile(np.arange(1000.0), 2)
+    s = shift_labels(inst, y, 0.25, seed=1)
+    for key in ("a", "b"):
+        m = inst == key
+        assert sorted(s[m]) == sorted(y[m])
+        offset = int((y[m][0] - s[m][0]) % 1000)
+        assert 250 <= offset <= 750
 
 
 def test_feature_scan_flags_a_leaked_future_value() -> None:
@@ -73,3 +78,13 @@ def test_report_has_skill_against_prior_for_informative_model() -> None:
 def test_qlike_is_zero_for_perfect_forecast() -> None:
     v = np.array([1.0, 2.0, 3.0])
     assert qlike(v, v) == pytest.approx(0.0) and qlike(v * 2, v) > 0
+
+
+def test_class_prior_is_per_instrument_with_pooled_fallback() -> None:
+    inst = np.array(["btc"] * 4 + ["sol"] * 4, dtype=object)
+    labels = np.array([0, 0, 0, 1, -1, 1, -1, 1], dtype=np.float64)
+    prior = ClassPrior.fit(inst, labels)
+    np.testing.assert_allclose(prior.by_instrument["btc"], [0, 0.75, 0.25])
+    np.testing.assert_allclose(prior.by_instrument["sol"], [0.5, 0, 0.5])
+    rows = prior.rows(np.array(["sol", "eth"], dtype=object))
+    np.testing.assert_allclose(rows, [[0.5, 0, 0.5], prior.overall])

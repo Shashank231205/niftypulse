@@ -243,7 +243,7 @@ class ResearchSettings(_Base):
     holdout_fraction: float = 0.2
     min_abs_score: float = 0.1
     bootstrap_block: int = 300
-    leakage_shuffle_block: int = 300
+    leakage_min_shift_fraction: float = 0.25
     leakage_max_abs_ic: float = 0.5
     leakage_max_shuffled_skill: float = 0.01
     lead_lag_steps: list[int] = [1, 2, 5, 10, 30]

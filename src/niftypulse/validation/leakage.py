@@ -1,7 +1,10 @@
 """Automated leakage checks, run before any result is trusted.
 
-1. Shuffled-label test: retrain with labels permuted inside time blocks. Real skill must
-   vanish; if the model still beats the baseline, something leaks (or the CV is broken).
+1. Shifted-label test: retrain with each instrument's labels rotated in time by a large
+   random offset. That keeps the labels' own autocorrelation and class mix but breaks every
+   link to the features, including slow ones such as volatility regimes (a short block
+   shuffle keeps those, because a block keeps its local share of "flat" labels). Real skill
+   must vanish; if the model still beats the baseline, something leaks.
 2. Suspicious-feature scan: no legitimate feature should be strongly rank-correlated with
    the forward return at these horizons. A large |IC| almost always means a future value
    slipped into the feature.
@@ -40,15 +43,23 @@ class LeakageReport:
         }
 
 
-def block_shuffle(
-    labels: npt.NDArray[np.float64], block: int, seed: int
+def shift_labels(
+    instruments: npt.NDArray[np.object_],
+    labels: npt.NDArray[np.float64],
+    min_fraction: float,
+    seed: int,
 ) -> npt.NDArray[np.float64]:
-    """Permute whole blocks of labels: destroys feature-label links, keeps label autocorrelation."""
+    """Rotate each instrument's label series by a random offset of at least `min_fraction`."""
     rng = np.random.default_rng(seed)
-    n = len(labels)
-    blocks = [labels[i : i + block] for i in range(0, n, block)]
-    rng.shuffle(blocks)
-    return np.concatenate(blocks)[:n]
+    out = labels.copy()
+    for key in np.unique(instruments):
+        idx = np.flatnonzero(instruments == key)
+        n = len(idx)
+        lo = max(1, int(n * min_fraction))
+        if n - lo <= lo:
+            continue
+        out[idx] = np.roll(labels[idx], int(rng.integers(lo, n - lo)))
+    return out
 
 
 def scan_features(
@@ -70,7 +81,7 @@ def run_leakage_checks(
     return_col: str,
     cv: PurgedWalkForward,
     skill_fn: Callable[[pd.DataFrame, pd.DataFrame, str], float],
-    shuffle_block: int,
+    min_shift_fraction: float,
     max_abs_ic: float,
     max_shuffled_skill: float,
     seed: int = 11,
@@ -82,7 +93,9 @@ def run_leakage_checks(
         assert_no_overlap(ts, fold.train, fold.test, cv.label_horizon_s)
 
     shuffled = frame.copy()
-    shuffled[label_col] = block_shuffle(frame[label_col].to_numpy(), shuffle_block, seed)
+    shuffled[label_col] = shift_labels(
+        frame["instrument"].to_numpy(), frame[label_col].to_numpy(), min_shift_fraction, seed
+    )
     last = folds[-1]
     skill = skill_fn(shuffled.iloc[last.train], shuffled.iloc[last.test], label_col)
     return LeakageReport(

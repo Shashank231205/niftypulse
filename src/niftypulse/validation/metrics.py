@@ -23,6 +23,31 @@ def to_class_index(labels: FloatArray) -> npt.NDArray[np.int64]:
     return (labels.astype(np.int64) + 1).astype(np.int64)
 
 
+@dataclass(frozen=True, slots=True)
+class ClassPrior:
+    """Training class frequencies per instrument: the no-skill baseline to beat.
+
+    A single pooled prior would credit a model merely for recognising which instrument a
+    row belongs to (BTC has far more "flat" labels than SOL), which is not forecasting.
+    """
+
+    by_instrument: dict[str, FloatArray]
+    overall: FloatArray
+
+    @classmethod
+    def fit(cls, instruments: npt.NDArray[np.object_], labels: FloatArray) -> "ClassPrior":
+        y = to_class_index(labels)
+        overall = np.bincount(y, minlength=3) / len(y)
+        by = {
+            str(k): np.bincount(y[instruments == k], minlength=3) / (instruments == k).sum()
+            for k in np.unique(instruments)
+        }
+        return cls(by, overall)
+
+    def rows(self, instruments: npt.NDArray[np.object_]) -> FloatArray:
+        return np.array([self.by_instrument.get(str(k), self.overall) for k in instruments])
+
+
 def expected_move(proba: FloatArray) -> FloatArray:
     """p(up) - p(down): a signed score in [-1, 1] used for ranking and trading."""
     return proba[:, 2] - proba[:, 0]
@@ -124,11 +149,11 @@ def classification_report(
     min_abs_score: float,
     bootstrap_block: int,
 ) -> ClassificationReport:
-    """`train_prior` is the training class frequency: the no-skill baseline to beat."""
+    """`train_prior` is the no-skill baseline: one class distribution, or one per row."""
     y = to_class_index(labels)
     proba = np.clip(proba, 1e-7, 1.0)
     proba = proba / proba.sum(axis=1, keepdims=True)
-    baseline = np.tile(train_prior, (len(y), 1))
+    baseline = np.broadcast_to(train_prior, (len(y), 3))
     present = np.unique(y)
     auc = (
         float(roc_auc_score(y, proba, multi_class="ovr", average="macro", labels=[0, 1, 2]))
