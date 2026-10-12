@@ -18,6 +18,7 @@ from sklearn.covariance import LedoitWolf
 from niftypulse.core.config import PolicySettings
 
 FloatArray = npt.NDArray[np.float64]
+_MIN_TRADE = 1e-6
 
 
 def expected_return_bps(proba: FloatArray, mean_up_bps: float, mean_down_bps: float) -> FloatArray:
@@ -37,13 +38,19 @@ class ConvexSizer:
         self._cost = cp.Parameter(n_assets, nonneg=True)
         self._chol = cp.Parameter((n_assets, n_assets))
         self.w = cp.Variable(n_assets)
+        # trade as its own variable keeps cost * |trade| DPP (parameter times variable only)
+        trade = cp.Variable(n_assets)
         risk = cp.sum_squares(self._chol.T @ self.w)
         objective = cp.Maximize(
             self._mu @ self.w
             - s.risk_aversion * risk
-            - cp.sum(cp.multiply(self._cost + s.turnover_penalty_bps, cp.abs(self.w - self._prev)))
+            - cp.sum(cp.multiply(self._cost + s.turnover_penalty_bps, cp.abs(trade)))
         )
-        constraints = [cp.abs(self.w) <= s.max_position, cp.norm1(self.w) <= s.max_gross]
+        constraints = [
+            trade == self.w - self._prev,
+            cp.abs(self.w) <= s.max_position,
+            cp.norm1(self.w) <= s.max_gross,
+        ]
         self._problem = cp.Problem(objective, constraints)
 
     def solve(
@@ -58,4 +65,6 @@ class ConvexSizer:
         self._problem.solve(solver=cp.CLARABEL)
         if self.w.value is None:
             return prev
-        return np.asarray(self.w.value, dtype=np.float64)
+        w = np.asarray(self.w.value, dtype=np.float64)
+        # interior-point solutions carry ~1e-9 residue; keep unchanged positions exact
+        return np.where(np.abs(w - prev) < _MIN_TRADE, prev, w)
