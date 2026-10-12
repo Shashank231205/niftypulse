@@ -44,7 +44,7 @@ def test_cpp_features_match_python(tmp_path: Path, feature_settings) -> None:  #
     export_events(events, ev_path, depth=10)
     subprocess.run(  # noqa: S603 - test binary
         [
-            BENCH,
+            str(Path(BENCH).resolve()),
             str(ev_path),
             str(out_path),
             ",".join(f"{w:g}" for w in s.windows_s),

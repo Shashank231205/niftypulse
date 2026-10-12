@@ -17,7 +17,8 @@ def test_bocpd_flags_a_mean_shift() -> None:
     x = np.concatenate([rng.normal(0, 1, 300), rng.normal(6, 1, 50)])
     cpd = BOCPD(hazard_lambda=200, max_run=400, recent_window=10)
     probs = [cpd.update(v)[0] for v in x]
-    assert max(probs[:290]) < 0.5
+    # the first `recent_window` steps are trivially "recent": no longer run exists yet
+    assert max(probs[10:290]) < 0.5
     assert max(probs[300:320]) > 0.8
 
 

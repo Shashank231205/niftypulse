@@ -21,7 +21,7 @@ from tests.conftest import book, trade
 
 
 async def test_tick_store_roundtrip_dedupes_redeliveries(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    writer = TickWriter(LakeSettings(root=str(tmp_path), flush_rows=10, _env_file=None), depth=5)  # type: ignore[call-arg]
+    writer = TickWriter(LakeSettings(root=str(tmp_path), flush_rows=5, _env_file=None), depth=5)  # type: ignore[call-arg]
     b1, b2 = (
         book(1.0, 100.0, 100.1, key="BINANCE_SPOT|BTCUSDT"),
         book(2.0, 100.1, 100.2, key="BINANCE_SPOT|BTCUSDT"),
