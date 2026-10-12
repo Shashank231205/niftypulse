@@ -138,6 +138,7 @@ def _label_instrument(
     grid = np.arange(ts[0] - ts[0] % step + step, ts[-1], step, dtype=np.int64)
     idx = np.searchsorted(ts, grid, side="right") - 1
     keep = idx >= 0
+    keep[keep] &= grid[keep] - ts[idx[keep]] <= int(s.max_staleness_s * _NS)
     grid, idx = grid[keep], idx[keep]
 
     values = np.array([rows[i].values for i in idx], dtype=np.float64)
@@ -151,11 +152,11 @@ def _label_instrument(
 
     half_spread_bps = _BPS * 0.5 * spread / mid[idx]
     for h in s.horizons_s:
-        ret = forward_returns_bps(ts, mid, grid, h)
+        ret = forward_returns_bps(ts, mid, grid, h, s.max_staleness_s)
         frame[f"ret_bps_{_h(h)}"] = ret
         frame[f"label_{_h(h)}"] = direction(ret, half_spread_bps, s)
     frame[f"fwd_rv_bps_{_h(s.vol_horizon_s)}"] = forward_realized_vol_bps(
-        ts, mid, grid, s.vol_horizon_s
+        ts, mid, grid, s.vol_horizon_s, s.max_staleness_s
     )
     longest = max(*s.horizons_s, s.vol_horizon_s)
     kept: pd.DataFrame = frame[grid + int(longest * _NS) <= ts[-1]]

@@ -63,3 +63,16 @@ def test_labels_are_forward_looking_and_cost_aware(label_settings) -> None:  # t
     rv = forward_realized_vol_bps(ts, mid, np.array([0]), 3.0)
     assert rv[0] > 0
     assert np.isnan(forward_returns_bps(ts, mid, np.array([9 * NS]), 5.0))[0]
+
+
+def test_labels_never_span_a_feed_gap() -> None:
+    secs = np.concatenate([np.arange(0, 21), np.arange(600, 621)])  # outage from 20s to 600s
+    ts = secs.astype(np.int64) * NS
+    mid = np.where(secs < 600, 100.0, 110.0)
+    sample = np.array([0, 18, 600], dtype=np.int64) * NS
+    ret = forward_returns_bps(ts, mid, sample, 10.0, max_staleness_s=5.0)
+    assert ret[0] == 0.0 and ret[2] == 0.0
+    assert np.isnan(ret[1])  # the first price after 28s arrives at 600s
+    rv = forward_realized_vol_bps(ts, mid, sample, 10.0, max_staleness_s=5.0)
+    assert rv[0] == 0.0 and rv[2] == 0.0
+    assert np.isnan(rv[1])

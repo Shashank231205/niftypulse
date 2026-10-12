@@ -197,6 +197,9 @@ class LabelSettings(_Base):
     spread_multiple: float = 1.0
     min_move_bps: float = 0.5
     sample_interval_ms: int = 1000
+    # feed outages: rows whose latest book, or whose forward price, is older than this
+    # are dropped instead of being filled across the gap
+    max_staleness_s: float = 5.0
 
 
 class ModelSettings(_Base):
