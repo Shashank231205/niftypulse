@@ -122,6 +122,17 @@ def research_train(
     typer.echo(json.dumps({"bundle": bundle.bundle_id, "selection": report["selection"]}, indent=2))
 
 
+@research.command("lead-lag")
+def research_lead_lag(dataset: str = typer.Option(...)) -> None:
+    """Transfer-entropy lead-lag between instruments, with surrogate significance."""
+    import json
+
+    from niftypulse.research.workflows import lead_lag, load_dataset
+
+    out = lead_lag(load_dataset(dataset))
+    typer.echo(json.dumps(out["strongest_lag_per_pair"], indent=2))
+
+
 @research.command("backtest")
 def research_backtest(
     bundle: str = typer.Option(...),

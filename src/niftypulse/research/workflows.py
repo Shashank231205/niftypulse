@@ -38,6 +38,7 @@ from niftypulse.models.fill_probability import FillProbabilityModel, label_fills
 from niftypulse.models.registry import ModelInput
 from niftypulse.policy.execution_agent import ExecutionEnv, PPOAgent, evaluate
 from niftypulse.research.bundle import ModelBundle, git_sha, load_bundle, save_bundle
+from niftypulse.research.lead_lag import lead_lag_matrix
 from niftypulse.research.training import ResearchContext, run_protocol
 from niftypulse.storage.repositories import BacktestRepository, ModelRepository
 from niftypulse.storage.schema import BacktestRun, ModelVersion
@@ -243,6 +244,31 @@ async def _record_backtest(bundle_id: str, start: date, end: date, summary: dict
             )
     finally:
         await db.close()
+
+
+def lead_lag(dataset: Dataset) -> dict[str, Any]:
+    """Transfer-entropy lead-lag between every pair of instruments in the dataset."""
+    rs = research_settings()
+    rows = lead_lag_matrix(
+        dataset.frame,
+        rs.lead_lag_steps,
+        rs.lead_lag_surrogates,
+        rs.lead_lag_min_shift_steps,
+        policy_settings().seed,
+    )
+    strongest: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        pair = f"{r.source} -> {r.target}"
+        if pair not in strongest or r.excess_bits > strongest[pair]["excess_bits"]:
+            strongest[pair] = r.as_dict()
+    report = {
+        "dataset_id": dataset.dataset_id,
+        "step_s": label_settings().sample_interval_ms / 1000,
+        "strongest_lag_per_pair": strongest,
+        "all": [r.as_dict() for r in rows],
+    }
+    _write(_reports_dir(dataset.dataset_id) / "lead_lag.json", report)
+    return report
 
 
 def execution_study(

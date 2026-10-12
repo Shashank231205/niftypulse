@@ -246,6 +246,9 @@ class ResearchSettings(_Base):
     leakage_shuffle_block: int = 300
     leakage_max_abs_ic: float = 0.5
     leakage_max_shuffled_skill: float = 0.01
+    lead_lag_steps: list[int] = [1, 2, 5, 10, 30]
+    lead_lag_surrogates: int = 200
+    lead_lag_min_shift_steps: int = 300
 
 
 class RegimeSettings(_Base):
