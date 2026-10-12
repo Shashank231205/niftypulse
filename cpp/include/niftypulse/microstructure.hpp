@@ -41,8 +41,9 @@ public:
     explicit DecayedSum(double tau_s) : tau_ns_(tau_s * kNs) {}
 
     double decay_to(int64_t ts) {
-        if (last_ && ts > last_) value_ *= std::exp(-static_cast<double>(ts - last_) / tau_ns_);
-        last_ = std::max(last_, ts);
+        if (started_ && ts > last_) value_ *= std::exp(-static_cast<double>(ts - last_) / tau_ns_);
+        last_ = started_ ? std::max(last_, ts) : ts;
+        started_ = true;
         return value_;
     }
 
@@ -57,6 +58,7 @@ private:
     double tau_ns_;
     double value_ = 0.0;
     int64_t last_ = 0;
+    bool started_ = false;
 };
 
 inline double ofi_level(const Level* prev, const Level* cur, bool is_bid) {

@@ -26,12 +26,12 @@ class DecayedSum:
 
     tau_s: float
     value: float = 0.0
-    last_ns: int = 0
+    last_ns: int | None = None
 
     def decay_to(self, ts_ns: int) -> float:
-        if self.last_ns and ts_ns > self.last_ns:
+        if self.last_ns is not None and ts_ns > self.last_ns:
             self.value *= math.exp(-(ts_ns - self.last_ns) / (self.tau_s * _NS))
-        self.last_ns = max(self.last_ns, ts_ns)
+        self.last_ns = ts_ns if self.last_ns is None else max(self.last_ns, ts_ns)
         return self.value
 
     def add(self, x: float, ts_ns: int) -> None:
