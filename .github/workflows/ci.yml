@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-extras --dev
+      - run: uv run ruff format --check src tests migrations
+      - run: uv run ruff check src tests migrations
+      - run: uv run mypy src
+      - run: uv run pytest -q
+
+  security:
+    name: secrets, dependencies, code scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: astral-sh/setup-uv@v6
+      - name: Dependency vulnerabilities
+        run: |
+          uv export --locked --all-extras --no-dev --no-hashes --format requirements-txt > requirements.txt
+          uvx pip-audit --requirement requirements.txt --disable-pip
+      - name: Static security analysis
+        run: uvx bandit -r src -ll -q
+
+  native:
+    name: C++ (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --dev
+      - name: Configure and build
+        shell: bash
+        run: |
+          uv run cmake -S cpp -B build -DCMAKE_BUILD_TYPE=Release -DNIFTYPULSE_BUILD_PYTHON=ON \
+            -Dpybind11_DIR="$(uv run python -m pybind11 --cmakedir)" \
+            -DPython_EXECUTABLE="$(uv run python -c 'import sys; print(sys.executable)')"
+          uv run cmake --build build --config Release
+      - name: Parity test (C++ vs Python features)
+        shell: bash
+        run: |
+          BENCH=$(find build -name 'replay_bench*' -type f \( -name '*.exe' -o -perm -u+x \) | head -1)
+          NIFTYPULSE_REPLAY_BENCH="$BENCH" uv run pytest -q tests/test_native_parity.py
