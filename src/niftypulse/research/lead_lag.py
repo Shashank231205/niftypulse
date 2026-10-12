@@ -14,7 +14,6 @@ p-value is the share of surrogates at or above the observed TE. Many pairs and l
 tested at once, so each result also carries a Benjamini-Hochberg q-value.
 """
 
-from collections import Counter
 from dataclasses import dataclass, replace
 from itertools import permutations
 from typing import Any
@@ -34,9 +33,16 @@ def discretise(returns: npt.NDArray[np.float64]) -> IntArray:
     return np.digitize(returns, [lo, hi]).astype(np.int64)
 
 
+_SYMBOLS = 3
+
+
 def _entropy(*columns: IntArray) -> float:
-    counts = np.array(list(Counter(zip(*columns, strict=True)).values()), dtype=np.float64)
-    p = counts / counts.sum()
+    """Plug-in joint entropy in bits; symbols are 0..2, so each joint state is a base-3 code."""
+    code = np.zeros(len(columns[0]), dtype=np.int64)
+    for col in columns:
+        code = code * _SYMBOLS + col
+    counts = np.bincount(code)
+    p = counts[counts > 0] / len(code)
     return float(-(p * np.log2(p)).sum())
 
 
