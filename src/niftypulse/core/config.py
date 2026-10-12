@@ -210,6 +210,8 @@ class ModelSettings(_Base):
     seed: int = 7
     n_threads: int = 4
     early_stopping_rounds: int = 50
+    # quiet windows have exactly zero realized vol; flooring keeps log targets and QLIKE sane
+    vol_floor_bps: float = 0.1
     logistic_c: float = 0.1
     gbm_learning_rate: float = 0.03
     gbm_num_leaves: int = 31

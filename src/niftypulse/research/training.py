@@ -292,8 +292,9 @@ def _volatility(
     ok = np.isfinite(full[target].to_numpy())
     dev, hold = dev[ok[dev]], hold[ok[hold]]
     rv_cols = [c for c in dataset.feature_names if c.startswith("realized_vol_bps_")]
+    floor = ctx.model.vol_floor_bps
     y = full[target].to_numpy()
-    har = HARVolatility(rv_cols)
+    har = HARVolatility(rv_cols, floor)
     har.fit(ModelInput(full.iloc[dev], rv_cols), y[dev])
     gbm = GBMVolatility(ctx.model)
     cut = int(len(dev) * 0.8)
@@ -303,14 +304,14 @@ def _volatility(
         ModelInput(full.iloc[dev[cut:]], dataset.feature_names),
         y[dev[cut:]],
     )
-    realized = y[hold] ** 2
+    realized = np.maximum(y[hold], floor) ** 2
     out = {
         "target": target,
         "har_qlike": qlike(har.predict_vol(ModelInput(full.iloc[hold], rv_cols)) ** 2, realized),
         "gbm_qlike": qlike(
             gbm.predict_vol(ModelInput(full.iloc[hold], dataset.feature_names)) ** 2, realized
         ),
-        "naive_qlike": qlike(np.full(len(hold), np.mean(y[dev] ** 2)), realized),
+        "naive_qlike": qlike(np.full(len(hold), np.mean(np.maximum(y[dev], floor) ** 2)), realized),
     }
     return out, gbm
 
