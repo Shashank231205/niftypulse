@@ -80,6 +80,19 @@ def _write(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _jsonb(value: Any) -> Any:
+    """JSON-safe copy for Postgres JSONB, which rejects NaN and Infinity: those become null."""
+    if isinstance(value, dict):
+        return {str(k): _jsonb(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonb(v) for v in value]
+    if isinstance(value, float | np.floating):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    return value
+
+
 def dataset_path(dataset_id: str) -> Path:
     return Path(research_settings().artifacts_root) / "datasets" / f"{dataset_id}.parquet"
 
@@ -180,11 +193,13 @@ async def _register(bundle: ModelBundle, report: dict[str, Any], digest: str, fo
                         tzinfo=UTC
                     ),
                     train_end=datetime.fromisoformat(report["period"]["end"]).replace(tzinfo=UTC),
-                    metrics={
-                        "chosen": chosen,
-                        "cv": report["cv"][chosen],
-                        "holdout": report["holdout"][chosen],
-                    },
+                    metrics=_jsonb(
+                        {
+                            "chosen": chosen,
+                            "cv": report["cv"][chosen],
+                            "holdout": report["holdout"][chosen],
+                        }
+                    ),
                 )
             )
     finally:
@@ -212,7 +227,9 @@ def backtest(bundle_id: str, period: Period) -> dict[str, Any]:
         preds, tapes, costs, conditional, policy_settings(), rebalance_s=horizon
     )
     step_s = label_settings().sample_interval_ms / 1000
-    summary = result.summary(steps_per_year=365 * 86_400 / step_s)
+    summary = result.summary(
+        steps_per_year=365 * 86_400 / step_s, bootstrap_block=research_settings().bootstrap_block
+    )
     report = {
         "bundle_id": bundle_id,
         "period": {"start": str(start), "end": str(end)},
@@ -239,7 +256,7 @@ async def _record_backtest(bundle_id: str, start: date, end: date, summary: dict
                     data_start=datetime.combine(start, datetime.min.time(), UTC),
                     data_end=datetime.combine(end, datetime.min.time(), UTC),
                     config=policy_settings().model_dump(mode="json"),
-                    results=json.loads(json.dumps(summary, default=float)),
+                    results=_jsonb(summary),
                 )
             )
     finally:

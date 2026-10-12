@@ -17,6 +17,7 @@ from niftypulse.backtest.costs import CostModel, Side
 from niftypulse.backtest.simulator import TapeSimulator, tape_index
 from niftypulse.core.config import PolicySettings
 from niftypulse.policy.sizing import ConvexSizer, expected_return_bps, shrunk_covariance
+from niftypulse.validation.metrics import block_bootstrap_ci
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -30,15 +31,27 @@ class BacktestResult:
     by_regime: dict[str, float] = field(default_factory=dict)
     per_instrument: dict[str, float] = field(default_factory=dict)
 
-    def summary(self, steps_per_year: float) -> dict[str, float | int | dict[str, float]]:
+    def summary(
+        self, steps_per_year: float, bootstrap_block: int
+    ) -> dict[str, float | int | list[float] | dict[str, float]]:
+        """Annualised Sharpe comes with a block-bootstrap 95% interval: over a few hours of
+        one-second steps the point estimate alone is mostly noise."""
         r = self.equity_bps.diff().fillna(0.0).to_numpy()
-        sharpe = float(np.mean(r) / np.std(r) * np.sqrt(steps_per_year)) if np.std(r) > 0 else 0.0
+
+        def sharpe_of(x: FloatArray) -> float:
+            sd = np.std(x)
+            return float(np.mean(x) / sd * np.sqrt(steps_per_year)) if sd > 0 else 0.0
+
         eq = self.equity_bps.to_numpy()
+        index = self.equity_bps.index
+        hours = (index[-1] - index[0]).total_seconds() / 3600 if len(index) > 1 else 0.0
         drawdown = float(np.max(np.maximum.accumulate(eq) - eq)) if len(eq) else 0.0
         return {
             "net_pnl_bps": float(eq[-1]) if len(eq) else 0.0,
             "gross_pnl_bps": float(self.gross_equity_bps.iloc[-1]) if len(eq) else 0.0,
-            "sharpe": sharpe,
+            "hours": hours,
+            "sharpe": sharpe_of(r),
+            "sharpe_ci95": list(block_bootstrap_ci(r, sharpe_of, bootstrap_block)),
             "max_drawdown_bps": drawdown,
             "trades": self.trades,
             "turnover": self.turnover,
